@@ -6,6 +6,17 @@ The first two operational slices of the **Next Realm Operating System** — an o
 
 This is **NRO**: command-center UI, ranked operator grid, live deployment radar pings on a fullscreen Mapbox war map, public dossiers with shareable HUD cards, rank-up cinematic overlays. Designed to evolve past IndiePage into a *living tactical face* for the Next Realm operator civilization.
 
+## 🛰 Live deployment
+
+**https://nextrealm-operators.dankpenta.workers.dev**
+
+Deployed as a single **Cloudflare Worker SPA** (see `worker/` directory). Same UI, same flow, same domain model as the Next.js version in `src/` — but shipped as a Preact app loaded via esm.sh CDN, sidestepping the Windows + Next.js install fragility that plagued the original `npm install` path. Two implementations live side-by-side: pick the one that fits your environment.
+
+| Implementation | Deploy via | Best for |
+|---|---|---|
+| **`worker/`** SPA | `worker/deploy.sh` → CF API | Fastest deploys, no local build needed, runs on any platform |
+| **`src/`** Next.js 16 | `npm run deploy` → OpenNext | Full SSR, edge runtime OG images, mature ecosystem |
+
 ## Two modules in this build
 
 ### 1. Operator Core
