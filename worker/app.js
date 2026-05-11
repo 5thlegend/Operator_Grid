@@ -57,6 +57,26 @@ const fallbackGeo = (seed="") => {
   const lat = 26 + (Math.abs(h >> 6) % 2000) / 100;
   return { lat, lng };
 };
+async function geocodeUS(query) {
+  if (!ENV.MAPBOX_TOKEN || ENV.MAPBOX_TOKEN.includes("placeholder")) return null;
+  const q = query.trim();
+  if (q.length < 2) return null;
+  try {
+    const r = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?country=us&types=place,region&limit=1&access_token=${ENV.MAPBOX_TOKEN}`);
+    if (!r.ok) return null;
+    const data = await r.json();
+    const f = data.features?.[0];
+    if (!f) return null;
+    const [lng, lat] = f.center;
+    return { lat, lng, place_name: f.place_name };
+  } catch { return null; }
+}
+const STACK_OPTIONS = [
+  "Next.js", "React", "Tailwind", "Supabase", "Cloudflare", "Postgres",
+  "Drizzle", "Prisma", "tRPC", "Vercel", "Hono", "Bun", "Node",
+  "Python", "FastAPI", "Django", "Go", "Rust", "Swift", "Kotlin",
+  "Three.js", "WebXR", "Stripe", "OpenAI", "Anthropic",
+];
 const relTime = (d) => {
   if (!d) return "—";
   const t = typeof d === "string" ? new Date(d).getTime() : d;
@@ -367,11 +387,16 @@ function Onboarding() {
   async function submit(e) {
     e.preventDefault(); setErr(null); setBusy(true);
     if (!/^[a-z0-9_]{2,24}$/.test(handle)) { setErr("Callsign: 2–24 chars, lowercase, numbers, underscore."); setBusy(false); return; }
-    const fb = fallbackGeo(handle);
+    let lat = null, lng = null;
+    if (city.trim()) {
+      const geo = await geocodeUS([city, state].filter(Boolean).join(", "));
+      if (geo) { lat = geo.lat; lng = geo.lng; }
+    }
+    if (lat == null) { const fb = fallbackGeo(handle); lat = fb.lat; lng = fb.lng; }
     const { error } = await supa.from("operators").insert({
       id: a.user.id, handle: handle.toLowerCase(), display_name: name.trim().slice(0, 48) || handle,
       tagline: tagline.trim().slice(0, 120) || null, city: city.trim() || null, state: state.trim().toUpperCase() || null,
-      lat: fb.lat, lng: fb.lng,
+      lat, lng,
     });
     if (error) { setErr(error.message); setBusy(false); return; }
     auth.set({ operator: await loadOperator(a.user.id) });
@@ -542,6 +567,184 @@ function Deploy() {
           ${err ? html`<p style="font-family:var(--mono);font-size:11px;color:var(--danger)">${err}</p>` : null}
           <button class="btn btn-primary btn-block" type="submit" disabled=${busy || title.length < 2}>${busy ? "STAMPING…" : `LOG ${kind.toUpperCase()} · +${XP[kind]} XP`}</button>
         </form>
+      </${Panel}>
+    </main>`;
+}
+
+// ====================================================================
+// PROFILE EDIT (dossier)
+// ====================================================================
+function Profile() {
+  const a = useAuth();
+  const op = a.operator;
+  const [name, setName] = useState("");
+  const [tagline, setTagline] = useState("");
+  const [bio, setBio] = useState("");
+  const [location, setLocation] = useState("");
+  const [city, setCity] = useState("");
+  const [state, setState] = useState("");
+  const [avatar, setAvatar] = useState("");
+  const [linkSite, setLinkSite] = useState("");
+  const [linkX, setLinkX] = useState("");
+  const [linkGh, setLinkGh] = useState("");
+  const [current, setCurrent] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  useEffect(() => {
+    if (!a.loading && !a.user) navigate("/login");
+    if (!a.loading && a.user && !a.operator) navigate("/onboarding");
+  }, [a.loading, a.user, a.operator]);
+  useEffect(() => {
+    if (!op) return;
+    setName(op.display_name || ""); setTagline(op.tagline || ""); setBio(op.bio || "");
+    setLocation(op.location || ""); setCity(op.city || ""); setState(op.state || "");
+    setAvatar(op.avatar_url || ""); setLinkSite(op.link_site || ""); setLinkX(op.link_x || "");
+    setLinkGh(op.link_github || ""); setCurrent(op.current_project || "");
+  }, [op?.id]);
+  async function submit(e) {
+    e.preventDefault(); setMsg(null); setBusy(true);
+    if (!name.trim()) { setMsg({ type: "err", text: "DISPLAY NAME REQUIRED." }); setBusy(false); return; }
+    let lat = op.lat, lng = op.lng;
+    const newCity = city.trim() || null;
+    const newState = state.trim().toUpperCase() || null;
+    if (newCity && (newCity !== op.city || newState !== op.state)) {
+      const geo = await geocodeUS([newCity, newState].filter(Boolean).join(", "));
+      if (geo) { lat = geo.lat; lng = geo.lng; }
+    } else if (!newCity) { lat = null; lng = null; }
+    const { error } = await supa.from("operators").update({
+      display_name: name.trim().slice(0, 48),
+      tagline: tagline.trim().slice(0, 120) || null,
+      bio: bio.trim().slice(0, 600) || null,
+      location: location.trim().slice(0, 48) || null,
+      city: newCity, state: newState, lat, lng,
+      avatar_url: avatar.trim().slice(0, 300) || null,
+      link_site: linkSite.trim().slice(0, 200) || null,
+      link_x: linkX.trim().slice(0, 60) || null,
+      link_github: linkGh.trim().slice(0, 60) || null,
+      current_project: current.trim().slice(0, 60) || null,
+    }).eq("id", a.user.id);
+    setBusy(false);
+    if (error) { setMsg({ type: "err", text: error.message.toUpperCase() }); return; }
+    auth.set({ operator: await loadOperator(a.user.id) });
+    setMsg({ type: "ok", text: "DOSSIER UPDATED." });
+  }
+  if (!op) return html`<${Nav} /><main class="container center"><span class="tag">// LOADING…</span></main>`;
+  return html`
+    <${Nav} variant="command" />
+    <main class="container" style="max-width:720px;padding:40px 24px">
+      <span class="tag">// EDIT DOSSIER</span>
+      <h1 style="font-family:var(--display);font-size:32px;font-weight:700;margin:8px 0 8px">Tune your callsign.</h1>
+      <p style="color:var(--dim);margin:0 0 24px">Handle is permanent. Everything else can be re-tuned.</p>
+      <${Panel} corners=${true}>
+        <div class="panel-head"><span class="lbl">// PROFILE</span></div>
+        <form onSubmit=${submit} style="padding:20px">
+          <div style="border:1px solid var(--line);background:rgba(0,0,0,.3);padding:10px 12px;font-family:var(--mono);font-size:10px;color:var(--mute);margin-bottom:16px">CALLSIGN <span style="color:var(--glow)">@${op.handle}</span> · IMMUTABLE</div>
+          <label class="field"><span class="lbl">Display Name</span><input class="input" required value=${name} onInput=${e => setName(e.target.value)} maxLength=${48}/></label>
+          <label class="field"><span class="lbl">Tagline</span><input class="input" value=${tagline} onInput=${e => setTagline(e.target.value)} maxLength=${120}/></label>
+          <label class="field"><span class="lbl">Bio</span><textarea class="textarea" value=${bio} onInput=${e => setBio(e.target.value)} maxLength=${600} rows="4"/></label>
+          <div style="display:grid;grid-template-columns:2fr 1fr 2fr;gap:12px">
+            <label class="field"><span class="lbl">City</span><input class="input" value=${city} onInput=${e => setCity(e.target.value)} maxLength=${48} placeholder="Los Angeles"/></label>
+            <label class="field"><span class="lbl">State</span><input class="input" style="text-transform:uppercase;font-family:var(--mono)" value=${state} onInput=${e => setState(e.target.value.toUpperCase().slice(0,2))} maxLength=${2}/></label>
+            <label class="field"><span class="lbl">Location (display)</span><input class="input" value=${location} onInput=${e => setLocation(e.target.value)} maxLength=${48} placeholder="Pacific NW"/></label>
+          </div>
+          <label class="field"><span class="lbl">Current Project</span><input class="input" value=${current} onInput=${e => setCurrent(e.target.value)} maxLength=${60}/></label>
+          <label class="field"><span class="lbl">Avatar URL</span><input class="input" value=${avatar} onInput=${e => setAvatar(e.target.value)} maxLength=${300}/></label>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+            <label class="field"><span class="lbl">Site</span><input class="input" value=${linkSite} onInput=${e => setLinkSite(e.target.value)} placeholder="https://"/></label>
+            <label class="field"><span class="lbl">X / Twitter</span><input class="input" value=${linkX} onInput=${e => setLinkX(e.target.value)} placeholder="@handle"/></label>
+            <label class="field"><span class="lbl">GitHub</span><input class="input" value=${linkGh} onInput=${e => setLinkGh(e.target.value)} placeholder="username"/></label>
+          </div>
+          ${msg ? html`<p style=${`font-family:var(--mono);font-size:11px;margin:8px 0;color:${msg.type === 'ok' ? 'var(--glow)' : 'var(--danger)'}`}>${msg.text}</p>` : null}
+          <button class="btn btn-primary btn-block" type="submit" disabled=${busy}>${busy ? "SAVING…" : "SAVE DOSSIER"}</button>
+        </form>
+      </${Panel}>
+    </main>`;
+}
+
+// ====================================================================
+// PROJECTS MANAGER
+// ====================================================================
+function Projects() {
+  const a = useAuth();
+  const [projects, setProjects] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
+  const [tagline, setTagline] = useState("");
+  const [status, setStatus] = useState("active");
+  const [stack, setStack] = useState([]);
+  const [linkLive, setLinkLive] = useState("");
+  const [linkRepo, setLinkRepo] = useState("");
+  useEffect(() => {
+    if (!a.loading && !a.user) navigate("/login");
+    if (!a.loading && a.user && !a.operator) navigate("/onboarding");
+  }, [a.loading, a.user, a.operator]);
+  useEffect(() => {
+    if (!a.user) return;
+    supa.from("projects").select("*").eq("operator_id", a.user.id).order("created_at", { ascending: false }).then(({ data }) => {
+      setProjects(data || []);
+      setShowForm((data || []).length === 0);
+    });
+  }, [a.user?.id]);
+  function reset() { setName(""); setSlug(""); setTagline(""); setStack([]); setStatus("active"); setLinkLive(""); setLinkRepo(""); }
+  async function submit(e) {
+    e.preventDefault(); setErr(null); setBusy(true);
+    const sl = slug.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40);
+    if (!/^[a-z0-9-]{2,40}$/.test(sl)) { setErr("SLUG: 2–40 chars, lowercase, dashes."); setBusy(false); return; }
+    const { data, error } = await supa.from("projects").insert({
+      operator_id: a.user.id, name: name.trim().slice(0, 60), slug: sl,
+      tagline: tagline.trim().slice(0, 140) || null, status, stack: stack.slice(0, 12),
+      link_live: linkLive.trim() || null, link_repo: linkRepo.trim() || null,
+    }).select("*").single();
+    setBusy(false);
+    if (error) { setErr(error.message); return; }
+    setProjects(p => [data, ...p]); setShowForm(false); reset();
+  }
+  async function del(id, projName) {
+    if (!confirm(`Delete project ${projName}? Deployments will be unlinked.`)) return;
+    const { error } = await supa.from("projects").delete().eq("id", id).eq("operator_id", a.user.id);
+    if (!error) setProjects(p => p.filter(x => x.id !== id));
+  }
+  if (!a.operator) return html`<${Nav} /><main class="container center"><span class="tag">// LOADING…</span></main>`;
+  return html`
+    <${Nav} variant="command" />
+    <main class="container" style="max-width:840px;padding:40px 24px">
+      <span class="tag">// PROJECTS</span>
+      <h1 style="font-family:var(--display);font-size:32px;font-weight:700;margin:8px 0 8px">Project registry.</h1>
+      <p style="color:var(--dim);margin:0 0 24px">Group your deployments under named operations. Public on your dossier.</p>
+      <${Panel} corners=${true}>
+        <div class="panel-head"><span class="lbl">// REGISTRY</span></div>
+        <div style="padding:20px">
+          ${projects.map(p => html`<div key=${p.id} style="display:flex;align-items:start;gap:14px;border:1px solid var(--line);background:rgba(17,17,20,.6);padding:14px;margin-bottom:10px">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-family:var(--display);font-size:17px">${p.name}</span><span style="font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--mute);text-transform:uppercase">${p.status}</span></div>
+              ${p.tagline ? html`<p style="color:var(--dim);margin:6px 0 0;font-size:13px">${p.tagline}</p>` : null}
+              ${p.stack?.length ? html`<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:4px">${p.stack.map(s => html`<span style="border:1px solid var(--line2);padding:2px 8px;font-family:var(--mono);font-size:9px;color:var(--dim)">${s}</span>`)}</div>` : null}
+            </div>
+            <button onClick=${() => del(p.id, p.name)} style="background:none;border:none;cursor:pointer;color:var(--mute);font-size:18px" title="Delete">✕</button>
+          </div>`)}
+          ${projects.length === 0 && !showForm ? html`<div style="border:1px solid var(--line2);background:rgba(0,0,0,.3);padding:32px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--mute)">NO PROJECTS YET.</div>` : null}
+          ${!showForm ? html`<button class="btn btn-glow" onClick=${() => setShowForm(true)} style="margin-top:10px">+ NEW PROJECT</button>`
+            : html`<form onSubmit=${submit} style="border:1px solid var(--line);background:rgba(0,0,0,.3);padding:18px;margin-top:10px">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                  <label class="field"><span class="lbl">Name</span><input class="input" required value=${name} onInput=${e => { setName(e.target.value); if (!slug) setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]+/g,"-").slice(0,40)); }} maxLength=${60}/></label>
+                  <label class="field"><span class="lbl">Slug (lowercase-dashes)</span><input class="input" style="font-family:var(--mono)" required value=${slug} onInput=${e => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]+/g,"-").slice(0,40))} maxLength=${40}/></label>
+                </div>
+                <label class="field"><span class="lbl">Tagline</span><input class="input" value=${tagline} onInput=${e => setTagline(e.target.value)} maxLength=${140}/></label>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+                  <label class="field"><span class="lbl">Status</span><select class="select" value=${status} onChange=${e => setStatus(e.target.value)}><option value="active">active</option><option value="launched">launched</option><option value="archived">archived</option></select></label>
+                  <label class="field"><span class="lbl">Live URL</span><input class="input" type="url" value=${linkLive} onInput=${e => setLinkLive(e.target.value)} placeholder="https://"/></label>
+                  <label class="field"><span class="lbl">Repo URL</span><input class="input" type="url" value=${linkRepo} onInput=${e => setLinkRepo(e.target.value)} placeholder="https://github.com/..."/></label>
+                </div>
+                <div class="field"><span class="lbl">Stack (click to toggle)</span>
+                  <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">${STACK_OPTIONS.map(s => { const on = stack.includes(s); return html`<button type="button" key=${s} onClick=${() => setStack(arr => on ? arr.filter(x => x !== s) : [...arr, s])} style=${`border:1px solid ${on ? 'var(--glow)' : 'var(--line2)'};background:${on ? 'var(--glowsoft)' : 'transparent'};padding:4px 10px;font-family:var(--mono);font-size:10px;color:${on ? 'var(--glow)' : 'var(--dim)'};cursor:pointer`}>${s}</button>`; })}</div>
+                </div>
+                ${err ? html`<p style="font-family:var(--mono);font-size:11px;color:var(--danger)">${err}</p>` : null}
+                <div style="display:flex;gap:10px;align-items:center"><button class="btn btn-primary" type="submit" disabled=${busy || !name || !slug}>${busy ? "SAVING…" : "SAVE PROJECT"}</button><button type="button" class="btn" onClick=${() => { setShowForm(false); reset(); }}>CANCEL</button></div>
+              </form>`}
+        </div>
       </${Panel}>
     </main>`;
 }
@@ -927,6 +1130,8 @@ function App() {
   if (path === "/grid/list") return html`<${GridList}/>`;
   if (path === "/command") return html`<${Command}/>`;
   if (path === "/command/deploy") return html`<${Deploy}/>`;
+  if (path === "/command/profile") return html`<${Profile}/>`;
+  if (path === "/command/projects") return html`<${Projects}/>`;
 
   // /u/[handle] and /u/[handle]/d/[id]
   const um = path.match(/^\/u\/([^/]+)(?:\/d\/([^/]+))?$/);
