@@ -11,11 +11,16 @@ const SITE = ENV.SITE_URL || location.origin;
 // ====================================================================
 // SUPABASE
 // ====================================================================
-const supa = createClient(ENV.SUPABASE_URL, ENV.SUPABASE_ANON_KEY, {
-  auth: { persistSession: true, autoRefreshToken: true, storageKey: "nro-auth" },
-});
-const supaConfigured = ENV.SUPABASE_URL && !ENV.SUPABASE_URL.includes("placeholder");
-const mapboxConfigured = ENV.MAPBOX_TOKEN && !ENV.MAPBOX_TOKEN.includes("placeholder");
+const supaConfigured = !!(ENV.SUPABASE_URL && ENV.SUPABASE_URL.startsWith("https://") && !ENV.SUPABASE_URL.includes("placeholder"));
+const mapboxConfigured = !!(ENV.MAPBOX_TOKEN && ENV.MAPBOX_TOKEN.startsWith("pk.") && !ENV.MAPBOX_TOKEN.includes("placeholder"));
+
+// createClient validates URL strictly — pass a valid-format stub so module
+// init never throws when secrets aren't set; every call is gated on supaConfigured.
+const supa = createClient(
+  supaConfigured ? ENV.SUPABASE_URL : "https://stub.supabase.co",
+  supaConfigured ? ENV.SUPABASE_ANON_KEY : "stub_anon_key_placeholder_value_long_enough_to_pass_jwt_format_check_xxxxxxxxxxxxxxxxxx",
+  { auth: { persistSession: true, autoRefreshToken: true, storageKey: "nro-auth" } },
+);
 
 // ====================================================================
 // DOMAIN
