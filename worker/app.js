@@ -138,6 +138,7 @@ function Nav({ variant = "public" }) {
   const a = useAuth();
   const handle = a.operator?.handle;
   return html`
+    ${!supaConfigured ? html`<div style="background:rgba(252,211,77,.08);border-bottom:1px solid rgba(252,211,77,.3);padding:6px 24px;font-family:var(--mono);font-size:10px;letter-spacing:2px;color:#fbbf24;text-align:center">// CONFIG PENDING · SUPABASE + MAPBOX SECRETS NOT SET · DATA + AUTH OFFLINE</div>` : null}
     <header class="nav">
       <div class="nav-inner">
         <${Link} href="/" class="brand">
@@ -917,17 +918,7 @@ function App() {
   const a = useAuth();
   useEffect(() => { bootAuth(); }, []);
 
-  if (!supaConfigured && path !== "/") {
-    return html`<${Nav}/>
-      <main class="container center">
-        <span class="tag" style="color:#fbbf24">// CONFIG PENDING</span>
-        <h1 style="font-family:var(--display);font-size:36px;margin:14px 0 8px">Awaiting transmission keys.</h1>
-        <p style="color:var(--dim)">The Operator Core is deployed but Supabase + Mapbox credentials are still placeholders. Once secrets are set on the Worker (<code style="font-family:var(--mono);color:var(--glow)">wrangler secret put</code>) every route here goes live.</p>
-        <${Link} href="/" class="btn btn-glow" style="margin-top:14px">← BACK TO BASE</${Link}>
-      </main>`;
-  }
-
-  // Route table
+  // Route table — pages render even without Supabase (empty states + config banner)
   if (path === "/") return html`<${Landing}/>`;
   if (path === "/login") return html`<${Login}/>`;
   if (path === "/onboarding") return html`<${Onboarding}/>`;

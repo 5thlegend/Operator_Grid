@@ -1,0 +1,8 @@
+{
+  "name": "nro-worker",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "bundle": "node bundle.js"
+  }
+}
