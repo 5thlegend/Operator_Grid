@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { pushDeploymentEvent } from "@/lib/nros";
 import type { DeploymentKind } from "@/lib/types";
 
 export async function createDeployment(input: {
@@ -38,6 +39,17 @@ export async function createDeployment(input: {
     .select("handle")
     .eq("id", user.id)
     .single();
+
+  // Federate this deployment to NROS — non-blocking, fire-and-forget.
+  if (op?.handle) {
+    void pushDeploymentEvent({
+      callsign: op.handle,
+      kind: input.kind,
+      title,
+      deploymentId: data.id,
+      url: input.url ?? null,
+    });
+  }
 
   revalidatePath("/grid");
   revalidatePath(`/u/${op?.handle}`);

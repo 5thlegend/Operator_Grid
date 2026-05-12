@@ -21,13 +21,14 @@
     "date-fns": "^4.1.0",
     "lucide-react": "*",
     "mapbox-gl": "^3.9.0",
+    "mkdirp": "^3.0.1",
     "motion": "^12.38.0",
-    "react-map-gl": "^7.1.7",
-    "zustand": "^5.0.2",
     "next": "^16.2.6",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "tailwind-merge": "^2.6.0"
+    "react-map-gl": "^7.1.7",
+    "tailwind-merge": "^2.6.0",
+    "zustand": "^5.0.2"
   },
   "devDependencies": {
     "@opennextjs/cloudflare": "^1.19.0",
