@@ -139,6 +139,37 @@ async function insertOperator(row, signal) {
 async function insertDeployment(row, signal) {
   return supaRest({ method: "POST", path: "deployments?select=id", body: row, signal });
 }
+async function insertGuild(row, signal) {
+  return supaRest({ method: "POST", path: "guilds", body: row, signal });
+}
+async function patchGuild(updated, guildId, signal) {
+  return supaRest({ method: "PATCH", path: `guilds?id=eq.${encodeURIComponent(guildId)}`, body: updated, signal });
+}
+async function joinGuild(guildId, userId, role, signal) {
+  return supaRest({ method: "POST", path: "guild_members", body: { guild_id: guildId, operator_id: userId, role: role || "member" }, signal });
+}
+async function leaveGuild(userId, signal) {
+  return supaRest({ method: "DELETE", path: `guild_members?operator_id=eq.${encodeURIComponent(userId)}`, body: undefined, signal, prefer: "return=minimal" });
+}
+
+// ====================================================================
+// GUILD COLOR PALETTE + SIGILS
+// ====================================================================
+const GUILD_COLORS = [
+  { hex: "#67e8f9", name: "Cyan" },
+  { hex: "#a78bfa", name: "Violet" },
+  { hex: "#fbbf24", name: "Gold" },
+  { hex: "#34d399", name: "Emerald" },
+  { hex: "#f87171", name: "Crimson" },
+  { hex: "#f59e0b", name: "Amber" },
+  { hex: "#38bdf8", name: "Sky" },
+  { hex: "#f472b6", name: "Rose" },
+  { hex: "#a3e635", name: "Lime" },
+  { hex: "#fb923c", name: "Orange" },
+  { hex: "#818cf8", name: "Indigo" },
+  { hex: "#22d3ee", name: "Teal" },
+];
+const GUILD_SIGILS = ["◈", "◆", "▲", "⬢", "◎", "★", "✦", "✺", "⚝", "☰", "⛓", "⌬"];
 
 // ====================================================================
 // SOCIAL NORMALIZATION + ICONS
@@ -236,8 +267,15 @@ const auth = {
 async function loadOperator(userId) {
   if (!supaConfigured || !userId) return null;
   try {
-    const { data, error } = await supa.from("operators").select("*").eq("id", userId).maybeSingle();
+    // Pull operator + guild affiliation (max 1 via unique constraint) in one round-trip.
+    const { data, error } = await supa.from("operators").select("*, guild_members(role, joined_at, guild:guilds(*))").eq("id", userId).maybeSingle();
     if (error) { console.warn("loadOperator:", error.message); return null; }
+    if (!data) return null;
+    // Flatten: data.guild = {...} or null
+    const member = (data.guild_members || [])[0];
+    data.guild = member?.guild || null;
+    data.guild_role = member?.role || null;
+    delete data.guild_members;
     return data;
   } catch (e) {
     console.warn("loadOperator threw:", e?.message || e);
@@ -276,6 +314,7 @@ function Nav({ variant = "public" }) {
           <span class="brand-text">OPERATOR CORE <span class="v">v0.1</span></span>
         </${Link}>
         <${Link} href="/grid" class="nav-link">Grid</${Link}>
+        <${Link} href="/guilds" class="nav-link">Guilds</${Link}>
         ${variant === "command" ? html`
           <${Link} href="/command" class="nav-link">Deck</${Link}>
           <${Link} href="/command/deploy" class="nav-link">Deploy</${Link}>
@@ -287,6 +326,15 @@ function Nav({ variant = "public" }) {
         ` : html`<${Link} href="/login" class="btn btn-glow">ENLIST</${Link}>`}
       </div>
     </header>`;
+}
+
+function GuildBadge({ guild, size = "md" }) {
+  if (!guild) return null;
+  const padding = size === "sm" ? "2px 8px" : "4px 12px";
+  const fontSize = size === "sm" ? 10 : 11;
+  return html`<${Link} href=${`/guild/${guild.slug}`} style=${`display:inline-flex;align-items:center;gap:6px;padding:${padding};border:1px solid ${guild.color}66;background:${guild.color}14;color:${guild.color};font-family:var(--mono);font-size:${fontSize}px;letter-spacing:2px;text-decoration:none;text-transform:uppercase;box-shadow:0 0 18px -6px ${guild.color}`}>
+    <span style="font-size:13px">${guild.sigil || "◈"}</span>${guild.name}
+  </${Link}>`;
 }
 
 function RankBadge({ rank, size }) {
@@ -783,6 +831,7 @@ function Profile() {
   const [f, setF] = useState({
     display_name: "", tagline: "", bio: "", location: "",
     city: "", state: "", avatar_url: "", current_project: "",
+    followers: 0, active_users: 0,
     link_site: "", link_x: "", link_github: "",
     link_youtube: "", link_tiktok: "", link_instagram: "",
     link_linkedin: "", link_farcaster: "", link_discord: "",
@@ -810,6 +859,8 @@ function Profile() {
       state: op.state || "",
       avatar_url: op.avatar_url || "",
       current_project: op.current_project || "",
+      followers: op.followers || 0,
+      active_users: op.active_users || 0,
       link_site: op.link_site || "",
       link_x: op.link_x || "",
       link_github: op.link_github || "",
@@ -852,6 +903,8 @@ function Profile() {
         city: newCity, state: newState, lat, lng,
         avatar_url: nullable(f.avatar_url, 300),
         current_project: nullable(f.current_project, 60),
+        followers: Math.max(0, Math.min(999999999, Number(f.followers) || 0)),
+        active_users: Math.max(0, Math.min(999999999, Number(f.active_users) || 0)),
         link_site: nullable(f.link_site, 200),
         link_x: nullable(f.link_x, 60),
         link_github: nullable(f.link_github, 60),
@@ -915,6 +968,26 @@ function Profile() {
             </div>
             <label class="field"><span class="lbl">Current Project</span><input class="input" value=${f.current_project} onInput=${e => update("current_project", e.target.value)} maxLength=${60}/></label>
             <label class="field"><span class="lbl">Avatar URL</span><input class="input" value=${f.avatar_url} onInput=${e => update("avatar_url", e.target.value)} maxLength=${300}/></label>
+
+            <div style="border-top:1px solid var(--line);padding-top:18px;margin-top:18px">
+              <div class="lbl" style="margin-bottom:10px">// INFLUENCE METRICS · MANUAL</div>
+              <p style="margin:0 0 10px;font-size:12px;color:var(--mute);line-height:1.5">These feed directly into your Signal Score and the size of your territory on the Grid. Sum across all channels.</p>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <label class="field" style="margin-bottom:0"><span class="lbl">Total Followers</span><input class="input" type="number" min="0" value=${f.followers} onInput=${e => update("followers", e.target.value)} placeholder="0"/></label>
+                <label class="field" style="margin-bottom:0"><span class="lbl">Active Users (Your Products)</span><input class="input" type="number" min="0" value=${f.active_users} onInput=${e => update("active_users", e.target.value)} placeholder="0"/></label>
+              </div>
+            </div>
+
+            <div style="border-top:1px solid var(--line);padding-top:18px;margin-top:18px">
+              <div class="lbl" style="margin-bottom:10px">// FACTION AFFILIATION</div>
+              ${op.guild ? html`<div style="display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line2);background:rgba(0,0,0,.3);padding:12px">
+                <${GuildBadge} guild=${op.guild}/>
+                <${Link} href="/command/guild" style="font-family:var(--mono);font-size:10px;color:var(--glow);letter-spacing:2px">MANAGE →</${Link}>
+              </div>` : html`<div style="display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line2);background:rgba(0,0,0,.3);padding:12px">
+                <span style="font-family:var(--mono);font-size:11px;color:var(--mute)">UNALLIED · NO GUILD</span>
+                <${Link} href="/guilds" style="font-family:var(--mono);font-size:10px;color:var(--glow);letter-spacing:2px">BROWSE GUILDS →</${Link}>
+              </div>`}
+            </div>
 
             <div style="border-top:1px solid var(--line);padding-top:18px;margin-top:18px">
               <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onClick=${() => setShowSocials(s => !s)}>
@@ -1035,8 +1108,12 @@ function Dossier({ handle, deploymentId }) {
   const [notfound, setNF] = useState(false);
   useEffect(() => {
     setOp(null); setNF(false);
-    supa.from("operators").select("*").eq("handle", handle.toLowerCase()).maybeSingle().then(async ({ data }) => {
+    supa.from("operators").select("*, guild_members(role, guild:guilds(*))").eq("handle", handle.toLowerCase()).maybeSingle().then(async ({ data }) => {
       if (!data) { setNF(true); return; }
+      const m = (data.guild_members || [])[0];
+      data.guild = m?.guild || null;
+      data.guild_role = m?.role || null;
+      delete data.guild_members;
       setOp(data);
       const [d, p] = await Promise.all([
         supa.from("deployments").select("*").eq("operator_id", data.id).order("created_at", { ascending: false }),
@@ -1060,9 +1137,10 @@ function Dossier({ handle, deploymentId }) {
         <div style="display:grid;grid-template-columns:auto 1fr auto;gap:24px;padding:24px;align-items:start">
           <${Avatar} op=${op} size=${96} />
           <div>
-            <div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:14px">
+            <div style="display:flex;flex-wrap:wrap;align-items:center;gap:14px">
               <h1 style="font-family:var(--display);font-size:30px;font-weight:700;margin:0">${op.display_name}</h1>
               <span style="font-family:var(--mono);font-size:13px;color:var(--mute)">@${op.handle}</span>
+              ${op.guild ? html`<${GuildBadge} guild=${op.guild}/>` : null}
             </div>
             ${op.tagline ? html`<p style="margin:8px 0 0;color:var(--dim);font-size:15px">${op.tagline}</p>` : null}
             <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;font-family:var(--mono);font-size:11px">
@@ -1263,11 +1341,16 @@ function SignalMap() {
   useEffect(() => {
     if (!supaConfigured) return;
     Promise.all([
-      supa.from("operators").select("id,handle,display_name,avatar_url,rank,xp,momentum,signal_score,followers,active_users,streak_days,city,state,lat,lng"),
+      supa.from("operators").select("id,handle,display_name,avatar_url,rank,xp,momentum,signal_score,followers,active_users,streak_days,city,state,lat,lng, guild_members(guild:guilds(id,slug,name,color,sigil))"),
       supa.from("deployments").select("id,operator_id,kind,title,created_at,operator:operators!inner(handle,city)").order("created_at", { ascending: false }).limit(20),
     ]).then(([o, f]) => {
       const map = {};
-      (o.data || []).forEach(op => { const fb = fallbackGeo(op.handle); map[op.id] = { ...op, lat: op.lat ?? fb.lat, lng: op.lng ?? fb.lng, signal_score: Number(op.signal_score||0) }; });
+      (o.data || []).forEach(op => {
+        const fb = fallbackGeo(op.handle);
+        const m = (op.guild_members || [])[0];
+        map[op.id] = { ...op, lat: op.lat ?? fb.lat, lng: op.lng ?? fb.lng, signal_score: Number(op.signal_score||0), guild: m?.guild || null };
+        delete map[op.id].guild_members;
+      });
       setOps(map);
       setFeed((f.data || []).map(r => { const op = Array.isArray(r.operator) ? r.operator[0] : r.operator; return { kind: "deploy", id: r.id, handle: op.handle, title: r.title, deployKind: r.kind, at: new Date(r.created_at).getTime(), city: op?.city }; }));
     });
@@ -1347,6 +1430,82 @@ function SignalMap() {
   const opList = Object.values(ops);
   const ranked = [...opList].sort((a, b) => (b.signal_score - a.signal_score) || (b.momentum - a.momentum));
 
+  // Group operators by guild for the territory layer (Mapbox-side rendering).
+  const guildClusters = useMemo(() => {
+    const by = {};
+    for (const o of opList) {
+      if (!o.guild || o.lat == null || o.lng == null) continue;
+      const g = o.guild;
+      if (!by[g.id]) by[g.id] = { guild: g, members: [], lats: [], lngs: [] };
+      by[g.id].members.push(o);
+      by[g.id].lats.push(o.lat);
+      by[g.id].lngs.push(o.lng);
+    }
+    // Compute centroid + approximate radius (km) for each guild's territory bubble.
+    return Object.values(by).map(c => {
+      const lat = c.lats.reduce((s, n) => s + n, 0) / c.lats.length;
+      const lng = c.lngs.reduce((s, n) => s + n, 0) / c.lngs.length;
+      // Haversine to find farthest member from centroid; add 20% buffer.
+      const R = 6371;
+      let maxKm = 60; // floor radius even for single-member guilds
+      for (let i = 0; i < c.lats.length; i++) {
+        const dLat = (c.lats[i] - lat) * Math.PI / 180;
+        const dLng = (c.lngs[i] - lng) * Math.PI / 180;
+        const a = Math.sin(dLat/2)**2 + Math.cos(lat * Math.PI/180) * Math.cos(c.lats[i] * Math.PI/180) * Math.sin(dLng/2)**2;
+        const d = 2 * R * Math.asin(Math.sqrt(a));
+        if (d > maxKm) maxKm = d;
+      }
+      return { guild: c.guild, members: c.members, lat, lng, radiusKm: maxKm * 1.25 };
+    });
+  }, [opList]);
+
+  // Paint guild territory circles on the Mapbox map via a managed GeoJSON Source+Layer.
+  useEffect(() => {
+    const m = mapRef.current; if (!m || !ready) return;
+    // Build features as Polygon approximations of circles (32-sided).
+    const features = guildClusters.map(c => {
+      const points = [];
+      const steps = 64;
+      // Earth radius in km
+      const R = 6371;
+      // Approximate degrees per km at this latitude
+      const latStep = (c.radiusKm / R) * (180 / Math.PI);
+      const lngStep = (c.radiusKm / (R * Math.cos(c.lat * Math.PI / 180))) * (180 / Math.PI);
+      for (let i = 0; i <= steps; i++) {
+        const t = (i / steps) * Math.PI * 2;
+        points.push([c.lng + Math.cos(t) * lngStep, c.lat + Math.sin(t) * latStep]);
+      }
+      return {
+        type: "Feature",
+        properties: { id: c.guild.id, color: c.guild.color, name: c.guild.name, sigil: c.guild.sigil, count: c.members.length },
+        geometry: { type: "Polygon", coordinates: [points] },
+      };
+    });
+    const data = { type: "FeatureCollection", features };
+
+    const sid = "guild-territory";
+    const fillLayer = "guild-territory-fill";
+    const lineLayer = "guild-territory-line";
+    if (m.getSource(sid)) {
+      m.getSource(sid).setData(data);
+    } else {
+      m.addSource(sid, { type: "geojson", data });
+      m.addLayer({
+        id: fillLayer, source: sid, type: "fill",
+        paint: { "fill-color": ["get", "color"], "fill-opacity": 0.08 },
+      });
+      m.addLayer({
+        id: lineLayer, source: sid, type: "line",
+        paint: { "line-color": ["get", "color"], "line-opacity": 0.45, "line-width": 1.2, "line-dasharray": [3, 3] },
+      });
+    }
+  }, [guildClusters, ready]);
+
+  function projectPoint_(lng, lat) {
+    const m = mapRef.current; if (!m) return null;
+    return m.project([lng, lat]);
+  }
+
   function projectPoint(lng, lat) {
     const m = mapRef.current; if (!m) return null;
     return m.project([lng, lat]);
@@ -1390,7 +1549,8 @@ function SignalMap() {
         ${ready && mapRef.current ? html`<div style="position:absolute;inset:0;pointer-events:none;z-index:3">
           ${opList.map(o => {
             const p = projectPoint(o.lng, o.lat); if (!p) return null;
-            const color = rankFill[o.rank] || "#67e8f9";
+            // Guild color trumps rank color when allied
+            const color = o.guild?.color || rankFill[o.rank] || "#67e8f9";
             const r = 6 + Math.min(20, o.signal_score * 2.5) + (o.rank === "SOVEREIGN" ? 8 : o.rank === "COMMANDER" ? 5 : o.rank === "ARCHITECT" ? 2 : 0);
             return html`<a href=${`/u/${o.handle}`} key=${o.id} class="marker"
                   onMouseEnter=${() => setTT({ op: o, x: p.x + 18, y: p.y - 8 })} onMouseLeave=${() => setTT(null)}
@@ -1464,6 +1624,8 @@ const STATIC_TARGETS = [
   { kind: "route", title: "Log Deployment", sub: "/command/deploy", icon: "↑", href: "/command/deploy", auth: true },
   { kind: "route", title: "Projects", sub: "/command/projects", icon: "□", href: "/command/projects", auth: true },
   { kind: "route", title: "Edit Dossier", sub: "/command/profile", icon: "◷", href: "/command/profile", auth: true },
+  { kind: "route", title: "Guilds", sub: "Faction Registry · /guilds", icon: "◈", href: "/guilds" },
+  { kind: "route", title: "Forge / Manage Guild", sub: "/command/guild", icon: "◆", href: "/command/guild", auth: true },
   { kind: "route", title: "Privacy", sub: "/privacy", icon: "⊙", href: "/privacy" },
   { kind: "route", title: "Terms", sub: "/terms", icon: "⊙", href: "/terms" },
 ];
@@ -1549,6 +1711,242 @@ function CommandPalette({ open, onClose }) {
 }
 
 // ====================================================================
+// GUILDS — list, dossier, manage
+// ====================================================================
+function Guilds() {
+  const [guilds, setGuilds] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    if (!supaConfigured) { setLoading(false); return; }
+    supa.from("guilds").select("*, members:guild_members(operator:operators(handle, display_name, signal_score, momentum, rank, avatar_url, lat, lng))").then(({ data }) => {
+      const enriched = (data || []).map(g => {
+        const ops = (g.members || []).map(m => m.operator).filter(Boolean);
+        const sigSum = ops.reduce((a, o) => a + Number(o.signal_score || 0), 0);
+        const momSum = ops.reduce((a, o) => a + Number(o.momentum || 0), 0);
+        return { ...g, ops, member_count: ops.length, total_signal: sigSum, total_momentum: momSum };
+      }).sort((a, b) => b.total_signal - a.total_signal);
+      setGuilds(enriched);
+      setLoading(false);
+    });
+  }, []);
+  return html`<${Nav} />
+    <main class="container" style="padding:40px 24px;max-width:1024px">
+      <div style="display:flex;justify-content:space-between;align-items:end;gap:14px;margin-bottom:24px">
+        <div>
+          <span class="tag">// FACTIONS · GUILD REGISTRY</span>
+          <h1 style="font-family:var(--display);font-size:38px;font-weight:700;margin:8px 0 8px">The Guilds.</h1>
+          <p style="color:var(--dim);margin:0">Operators band together as guilds. Combined signal forms territory.</p>
+        </div>
+        <${Link} href="/command/guild" class="btn btn-glow">FORGE GUILD</${Link}>
+      </div>
+      <${Panel}>
+        <div class="panel-head"><span class="lbl">// SIGNAL-RANKED</span><span class="hint">${guilds.length} GUILDS</span></div>
+        ${loading ? html`<div style="padding:48px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--mute)">// SCANNING…</div>`
+          : guilds.length === 0 ? html`<div style="padding:64px 16px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--mute)">// NO GUILDS YET · BE THE FIRST FOUNDER</div>`
+          : guilds.map((g, i) => html`<${Link} href=${`/guild/${g.slug}`} class="row" key=${g.id}>
+              <span class="rank-num">${String(i+1).padStart(2,"0")}</span>
+              <span style="width:42px;height:42px;display:grid;place-items:center;border:1px solid ${g.color}66;background:${g.color}14;color:${g.color};font-size:18px">${g.sigil || "◈"}</span>
+              <div style="flex:1;min-width:0">
+                <div style="font-family:var(--display);font-size:18px">${g.name}</div>
+                <div style="display:flex;gap:10px;align-items:center;margin-top:4px;color:var(--mute);font-family:var(--mono);font-size:11px">
+                  <span style="color:${g.color}">${g.member_count} ${g.member_count === 1 ? "OPERATOR" : "OPERATORS"}</span>
+                  ${g.tagline ? html`<span>· ${g.tagline}</span>` : null}
+                </div>
+              </div>
+              <div style="text-align:right;display:flex;gap:18px">
+                <div><div style="font-family:var(--mono);font-size:18px;color:${g.color};text-shadow:0 0 12px ${g.color}66">${g.total_signal.toFixed(1)}</div><div style="font-family:var(--mono);font-size:8px;color:var(--mute);letter-spacing:2px">SIGNAL</div></div>
+                <div><div style="font-family:var(--mono);font-size:18px;color:var(--text)">${g.total_momentum}</div><div style="font-family:var(--mono);font-size:8px;color:var(--mute);letter-spacing:2px">MOMENTUM</div></div>
+              </div>
+            </${Link}>`)}
+      </${Panel}>
+    </main>
+    <${Footer} />`;
+}
+
+function GuildDossier({ slug }) {
+  const [g, setG] = useState(null);
+  const [notfound, setNF] = useState(false);
+  const [members, setMembers] = useState([]);
+  const a = useAuth();
+  useEffect(() => {
+    setG(null); setNF(false); setMembers([]);
+    supa.from("guilds").select("*, founder:operators!founder_id(handle, display_name, rank)").eq("slug", slug.toLowerCase()).maybeSingle().then(({ data }) => {
+      if (!data) { setNF(true); return; }
+      setG(data);
+      supa.from("guild_members").select("role, joined_at, operator:operators(*)").eq("guild_id", data.id).then(({ data: ms }) => {
+        const sorted = (ms || []).sort((x, y) => Number(y.operator?.signal_score || 0) - Number(x.operator?.signal_score || 0));
+        setMembers(sorted);
+      });
+    });
+  }, [slug]);
+  if (notfound) return html`<${Nav}/><main class="container center"><span class="tag">// SIGNAL LOST · 404</span><h1 style="font-family:var(--display);font-size:42px;margin:14px 0">No such guild.</h1><${Link} href="/guilds" class="btn btn-primary" style="margin-top:16px">BACK TO REGISTRY →</${Link}></main>`;
+  if (!g) return html`<${Nav}/><main class="container center"><span class="tag">// LOADING GUILD…</span></main>`;
+  const totalSignal = members.reduce((a, m) => a + Number(m.operator?.signal_score || 0), 0);
+  const totalMomentum = members.reduce((a, m) => a + Number(m.operator?.momentum || 0), 0);
+  const totalDeps = members.reduce((a, m) => a + 0, 0); // could fetch in second query
+  const founder = Array.isArray(g.founder) ? g.founder[0] : g.founder;
+  const meIsMember = !!a.operator?.guild && a.operator.guild.id === g.id;
+  const meIsFounder = a.user?.id === g.founder_id;
+  return html`<${Nav}/>
+    <main class="container" style="padding:40px 24px;max-width:1024px">
+      <${Panel} corners=${true} style=${`box-shadow:0 0 64px -16px ${g.color}80`}>
+        <div class="panel-head"><span class="lbl">// GUILD DOSSIER</span><span class="hint">FORGED ${new Date(g.created_at).toISOString().slice(0,10)}</span></div>
+        <div style="display:grid;grid-template-columns:auto 1fr auto;gap:24px;padding:24px;align-items:start">
+          <span style=${`width:96px;height:96px;display:grid;place-items:center;border:1px solid ${g.color};background:${g.color}1f;color:${g.color};font-size:48px;box-shadow:0 0 42px -8px ${g.color}`}>${g.sigil || "◈"}</span>
+          <div>
+            <h1 style="font-family:var(--display);font-size:36px;font-weight:700;margin:0">${g.name}</h1>
+            <div style="font-family:var(--mono);font-size:12px;color:var(--mute);margin-top:4px">@${g.slug}</div>
+            ${g.tagline ? html`<p style="margin:12px 0 0;color:var(--dim);font-size:15px">${g.tagline}</p>` : null}
+            ${g.description ? html`<p style="margin-top:14px;color:var(--dim);font-size:14px;line-height:1.6;max-width:60ch">${g.description}</p>` : null}
+            ${founder ? html`<div style="margin-top:14px;font-family:var(--mono);font-size:11px;color:var(--mute)">FOUNDER: <${Link} href=${`/u/${founder.handle}`} style="color:${g.color}">${founder.display_name} · ${founder.rank}</${Link}></div>` : null}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            ${a.operator && !meIsMember ? html`<button class="btn btn-glow" onClick=${async () => {
+              if (a.operator.guild) { if (!confirm(`Leave ${a.operator.guild.name} to join ${g.name}?`)) return; await leaveGuild(a.user.id); }
+              const r = await joinGuild(g.id, a.user.id, "member");
+              if (r.ok) { loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); }); setMembers(m => [...m, { role: "member", joined_at: new Date().toISOString(), operator: a.operator }]); } else alert(r.error);
+            }}>JOIN GUILD</button>` : null}
+            ${meIsMember && !meIsFounder ? html`<button class="btn" onClick=${async () => { if (!confirm(`Leave ${g.name}?`)) return; const r = await leaveGuild(a.user.id); if (r.ok) { loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); }); setMembers(m => m.filter(x => x.operator?.id !== a.user.id)); } }}>LEAVE GUILD</button>` : null}
+            ${meIsFounder ? html`<${Link} href="/command/guild" class="btn">MANAGE</${Link}>` : null}
+          </div>
+        </div>
+        <div class="stats-row" style="border-top:1px solid var(--line)">
+          <${Stat} label="Combined Signal" value=${totalSignal.toFixed(1)} accent="glow" />
+          <${Stat} label="Combined Momentum" value=${totalMomentum} accent="glow" hint="14D" />
+          <${Stat} label="Members" value=${members.length} />
+          <${Stat} label="Sigil" value=${g.sigil || "◈"} />
+        </div>
+      </${Panel}>
+      <${Panel} style="margin-top:24px">
+        <div class="panel-head"><span class="lbl">// MEMBER ROSTER</span><span class="hint">${members.length}</span></div>
+        ${members.length === 0 ? html`<div style="padding:48px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--mute)">// NO MEMBERS YET</div>`
+          : members.map((m, i) => { const o = m.operator || {}; return html`<${Link} href=${`/u/${o.handle}`} class="row" key=${o.id}>
+            <span class="rank-num">${String(i+1).padStart(2,"0")}</span><${Avatar} op=${o} size=${36}/>
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;gap:8px;align-items:center"><span class="name">${o.display_name}</span><span class="handle">@${o.handle}</span></div>
+              <div class="meta"><${RankBadge} rank=${o.rank}/><span class="handle" style="text-transform:uppercase">${m.role}</span></div>
+            </div>
+            <div class="right"><div class="num" style=${`color:${g.color}`}>${Number(o.signal_score || 0).toFixed(1)}</div><div class="sub">SIGNAL</div></div>
+          </${Link}>`; })}
+      </${Panel}>
+    </main>
+    <${Footer}/>`;
+}
+
+function CommandGuild() {
+  const a = useAuth();
+  const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
+  const [tagline, setTagline] = useState("");
+  const [description, setDescription] = useState("");
+  const [color, setColor] = useState(GUILD_COLORS[0].hex);
+  const [sigil, setSigil] = useState(GUILD_SIGILS[0]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  useEffect(() => { if (!a.loading && !a.user) navigate("/login"); if (!a.loading && a.user && !a.operator) navigate("/onboarding"); }, [a.loading, a.user, a.operator]);
+  // pre-fill if user is founder of existing guild
+  useEffect(() => {
+    const g = a.operator?.guild;
+    if (g && a.user?.id === g.founder_id) {
+      setName(g.name || ""); setSlug(g.slug || ""); setTagline(g.tagline || ""); setDescription(g.description || ""); setColor(g.color || GUILD_COLORS[0].hex); setSigil(g.sigil || GUILD_SIGILS[0]);
+    }
+  }, [a.operator?.guild?.id]);
+  async function submit(e) {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true); setErr(null);
+    try {
+      const sl = slug.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40);
+      if (!/^[a-z0-9-]{2,40}$/.test(sl)) throw new Error("SLUG: 2–40 chars, lowercase, dashes.");
+      if (!name.trim()) throw new Error("NAME REQUIRED.");
+      const payload = {
+        slug: sl, name: name.trim().slice(0, 60),
+        tagline: tagline.trim().slice(0, 140) || null,
+        description: description.trim().slice(0, 800) || null,
+        color, sigil,
+        founder_id: a.user.id,
+      };
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 20000);
+      let res;
+      const existing = a.operator?.guild;
+      const isFounder = existing && a.user.id === existing.founder_id;
+      try {
+        res = isFounder
+          ? await patchGuild(payload, existing.id, ac.signal)
+          : await insertGuild(payload, ac.signal);
+      } finally { clearTimeout(timer); }
+      if (!res.ok) throw new Error(res.error || "Operation failed.");
+      // For new guild: auto-join founder as member
+      if (!isFounder && res.data?.id) {
+        await joinGuild(res.data.id, a.user.id, "founder", null);
+      }
+      loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); });
+      navigate(`/guild/${sl}`);
+    } catch (e) {
+      console.error("[NRO:guild]", e);
+      setErr(String(e?.message || e));
+      setBusy(false);
+    }
+  }
+  if (!a.operator) return html`<${Nav}/><main class="container center"><span class="tag">// LOADING…</span></main>`;
+  const existing = a.operator.guild;
+  const isFounder = existing && a.user.id === existing.founder_id;
+  const isMember = existing && !isFounder;
+  return html`<${Nav} variant="command"/>
+    <main class="container" style="max-width:760px;padding:40px 24px">
+      <span class="tag">// FACTION CONTROL</span>
+      <h1 style="font-family:var(--display);font-size:32px;font-weight:700;margin:8px 0 8px">${isFounder ? "Govern your guild." : isMember ? "Allied." : "Forge a guild."}</h1>
+      <p style="color:var(--dim);margin:0 0 24px">${isFounder ? "Edit faction parameters. Members will see updates instantly." : isMember ? `Currently allied with ${existing.name}. Leave to forge your own.` : "Combined signal forms territory. Operators rally under your sigil."}</p>
+      ${isMember ? html`
+        <${Panel} corners=${true}>
+          <div class="panel-head"><span class="lbl">// CURRENT ALLIANCE</span></div>
+          <div style="padding:20px;text-align:center">
+            <${GuildBadge} guild=${existing}/>
+            <div style="margin-top:14px;display:flex;gap:8px;justify-content:center">
+              <${Link} href=${`/guild/${existing.slug}`} class="btn">VIEW DOSSIER</${Link}>
+              <button class="btn" onClick=${async () => { if (!confirm(`Leave ${existing.name}?`)) return; const r = await leaveGuild(a.user.id); if (r.ok) { loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); }); navigate("/guilds"); } }}>LEAVE</button>
+            </div>
+          </div>
+        </${Panel}>` : html`
+        <${Panel} corners=${true}>
+          <div class="panel-head"><span class="lbl">// ${isFounder ? "EDIT GUILD" : "FORGE GUILD"}</span></div>
+          <form onSubmit=${submit} style="padding:20px">
+            <fieldset disabled=${busy} style="border:0;padding:0;margin:0">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <label class="field"><span class="lbl">Name</span><input class="input" required value=${name} onInput=${e => { setName(e.target.value); if (!slug || !isFounder) setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40)); }} maxLength=${60}/></label>
+                <label class="field"><span class="lbl">Slug</span><input class="input" required value=${slug} onInput=${e => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40))} maxLength=${40} disabled=${isFounder} style="font-family:var(--mono)"/></label>
+              </div>
+              <label class="field"><span class="lbl">Tagline</span><input class="input" value=${tagline} onInput=${e => setTagline(e.target.value)} maxLength=${140} placeholder="One line. What you stand for."/></label>
+              <label class="field"><span class="lbl">Description</span><textarea class="textarea" value=${description} onInput=${e => setDescription(e.target.value)} maxLength=${800} rows="4"/></label>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+                <div>
+                  <span class="lbl" style="display:block;margin-bottom:6px">Guild Color</span>
+                  <div style="display:flex;flex-wrap:wrap;gap:6px">
+                    ${GUILD_COLORS.map(c => html`<button type="button" key=${c.hex} onClick=${() => setColor(c.hex)} title=${c.name} style=${`width:30px;height:30px;border:2px solid ${color === c.hex ? c.hex : 'transparent'};background:${c.hex}40;cursor:pointer;display:grid;place-items:center;color:${c.hex};font-size:14px`}>${color === c.hex ? '✓' : ''}</button>`)}
+                  </div>
+                </div>
+                <div>
+                  <span class="lbl" style="display:block;margin-bottom:6px">Sigil</span>
+                  <div style="display:flex;flex-wrap:wrap;gap:6px">
+                    ${GUILD_SIGILS.map(s => html`<button type="button" key=${s} onClick=${() => setSigil(s)} style=${`width:30px;height:30px;border:1px solid ${sigil === s ? color : 'var(--line2)'};background:${sigil === s ? color + '20' : 'rgba(0,0,0,.3)'};cursor:pointer;color:${sigil === s ? color : 'var(--dim)'};font-size:16px`}>${s}</button>`)}
+                  </div>
+                </div>
+              </div>
+              <div style="margin-top:18px;padding:14px;border:1px solid var(--line);background:rgba(0,0,0,.3);text-align:center">
+                <div class="lbl">// PREVIEW</div>
+                <div style="margin-top:8px"><${GuildBadge} guild=${{ slug: slug || 'preview', name: name || 'GUILD NAME', sigil, color }}/></div>
+              </div>
+              ${err ? html`<p style="font-family:var(--mono);font-size:11px;color:var(--danger);margin:10px 0">${err}</p>` : null}
+              <button class="btn btn-primary btn-block" type="submit" disabled=${busy || !name || !slug} style="margin-top:14px">${busy ? "FORGING…" : (isFounder ? "SAVE CHANGES" : "FORGE GUILD")}</button>
+            </fieldset>
+          </form>
+        </${Panel}>
+      `}
+    </main>`;
+}
+
+// ====================================================================
 // PRIVACY / TERMS
 // ====================================================================
 function Privacy() {
@@ -1630,8 +2028,13 @@ function App() {
   if (path === "/command/deploy") return html`<${Deploy}/>`;
   if (path === "/command/profile") return html`<${Profile}/>`;
   if (path === "/command/projects") return html`<${Projects}/>`;
+  if (path === "/command/guild") return html`<${CommandGuild}/>`;
+  if (path === "/guilds") return html`<${Guilds}/>`;
   if (path === "/privacy") return html`<${Privacy}/>`;
   if (path === "/terms") return html`<${Terms}/>`;
+
+  const gm = path.match(/^\/guild\/([^/]+)\/?$/);
+  if (gm) return html`<${GuildDossier} slug=${gm[1]}/>`;
 
   // ROOT — gets wrapped with command palette regardless of route
   /* see below */

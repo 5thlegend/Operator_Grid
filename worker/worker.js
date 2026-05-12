@@ -158,6 +158,34 @@ async function routeMeta(path, origin, env) {
     };
   }
 
+  // /guilds
+  if (path === "/guilds") {
+    return {
+      title: "Guilds · NRO",
+      description: "Operator factions on the Next Realm Grid. Combined signal forms territory.",
+      image: origin + "/api/og/operator/_default",
+      cache: "public, max-age=60",
+    };
+  }
+
+  // /guild/[slug]
+  const mg = path.match(/^\/guild\/([^/]+)\/?$/);
+  if (mg) {
+    try {
+      const r = await fetch(`${SB}/rest/v1/guilds?slug=eq.${encodeURIComponent(mg[1].toLowerCase())}&select=name,tagline,sigil,color`, { headers, cf: { cacheTtl: 30 } });
+      const arr = await r.json();
+      const g = arr?.[0];
+      if (g) {
+        return {
+          title: `${g.sigil || "◈"} ${g.name} · NRO Guild`,
+          description: g.tagline || `${g.name} — operator faction on the Next Realm Grid.`,
+          image: origin + "/api/og/operator/_default",
+          cache: "public, max-age=60",
+        };
+      }
+    } catch {}
+  }
+
   // /login
   if (path === "/login") {
     return {
