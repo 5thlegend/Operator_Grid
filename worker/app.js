@@ -181,13 +181,21 @@ const TX = {
     kind: "OPERATOR_JOINED", realm_slug: "operator-grid",
     title: `${op.display_name} enlisted as @${op.handle}`,
     operator_callsign: op.handle,
-    metadata: { city: op.city || null, state: op.state || null, lat: op.lat || null, lng: op.lng || null },
+    metadata: { city: op.city || null, state: op.state || null, lat: op.lat || null, lng: op.lng || null, recruited_by: op.recruited_by || null },
   }),
   deployment: (op, d) => ({
     kind: "MISSION_COMPLETED", realm_slug: "operator-grid",
     title: `${(d.kind || "deploy").toUpperCase()} · ${d.title}`,
     operator_callsign: op.handle,
     metadata: { deployment_id: d.id, kind: d.kind, xp_awarded: d.xp_awarded, url: d.url || null, signal_score_after: op.signal_score, momentum_after: op.momentum, streak_days: op.streak_days },
+  }),
+  // Explicit XP synchronization — federation hook #4. Fired alongside
+  // MISSION_COMPLETED so NROS's canonical xp_logs stay in sync.
+  xpAwarded: (op, delta, reason) => ({
+    kind: "XP_AWARDED", realm_slug: "operator-grid",
+    title: `+${delta} XP · ${reason || "deployment"}`,
+    operator_callsign: op.handle,
+    metadata: { delta, total_xp_after: op.xp, source: "operator-grid", reason: reason || "deployment" },
   }),
   rankUp: (op, fromRank, toRank) => ({
     kind: "RANK_CHANGED", realm_slug: "operator-grid",
@@ -425,7 +433,10 @@ function WorkCard({ p }) {
   const revValue = showMrr ? fmtMoney(p.mrr_cents) : showArr ? fmtMoney(p.arr_cents) : showLifetime ? fmtMoney(p.last_sale_cents) : "—";
   const usersValue = fmtUsers(p.users_count);
   const goldRev = p.monetization === 'acquired' || p.monetization === 'whitelabel';
-  return html`<article class="work-card">
+  // High-revenue cards get a gold accent halo. Threshold: $50k+ in any flavor.
+  const totalRevCents = (p.mrr_cents || 0) + (p.arr_cents || 0) + (p.last_sale_cents || 0);
+  const highRev = totalRevCents >= 5_000_000; // $50,000+
+  return html`<article class=${`work-card ${highRev ? 'high-rev' : ''}`}>
     <div class="cover" style=${cover ? `background-image:url(${cover})` : ""}>
       <span class="status-pill" style=${`color:${mon.color};border-color:${mon.pillBorder};background:${mon.pillBg}`}>${mon.label}</span>
     </div>
@@ -527,6 +538,32 @@ function Panel({ corners, glow, class: cls = "", children, style }) {
 }
 function Stat({ label, value, accent, hint }) {
   return html`<div class="stat"><span class="lbl">${label}</span><span class=${`val ${accent || ""}`}>${value}</span>${hint ? html`<span class="hint">${hint}</span>` : null}</div>`;
+}
+
+// Animated count-up for numeric stats. Visible from-0 roll-up on first render.
+// Defaults: 900ms duration, ease-out cubic. Falls back to instant for non-numeric.
+function CountUp({ to, durationMs = 900, format }) {
+  const target = Number(to) || 0;
+  const [v, setV] = useState(0);
+  const startRef = useRef(null);
+  useEffect(() => {
+    if (typeof to !== "number" && isNaN(Number(to))) { setV(target); return; }
+    startRef.current = null;
+    let raf;
+    const tick = (ts) => {
+      if (!startRef.current) startRef.current = ts;
+      const t = Math.min(1, (ts - startRef.current) / durationMs);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setV(target * eased);
+      if (t < 1) raf = requestAnimationFrame(tick);
+      else setV(target);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => raf && cancelAnimationFrame(raf);
+  }, [target, durationMs]);
+  if (format) return html`<span>${format(v)}</span>`;
+  // Integer rendering with thousands separator
+  return html`<span>${Math.round(v).toLocaleString()}</span>`;
 }
 function RankProgress({ rank, xp }) {
   const i = RANKS.findIndex(t => t.name === rank);
@@ -630,12 +667,12 @@ function Landing() {
       <${Panel} corners=${true}>
         <div class="panel-head"><span class="lbl">// NETWORK PULSE · LIVE</span><span class="hint">PUBLIC INTELLIGENCE LAYER</span></div>
         <div class="stats-row">
-          <${Stat} label="Operators" value=${stats.operators} accent="glow" />
-          <${Stat} label="Guilds" value=${stats.guilds} accent="glow" />
-          <${Stat} label="Deployments" value=${stats.deployments} accent="glow" />
-          <${Stat} label="Ships · 7D" value=${stats.shipsThisWeek} hint="LAST WEEK" />
-          <${Stat} label="Tracked Rev" value=${fmtMoney(stats.totalMrrCents)} accent="gold" hint="MONTHLY EQUIV" />
-          <${Stat} label="Reach" value=${fmtUsers(stats.totalUsers)} hint="USERS COMBINED" />
+          <${Stat} label="Operators" value=${html`<${CountUp} to=${stats.operators}/>`} accent="glow" />
+          <${Stat} label="Guilds" value=${html`<${CountUp} to=${stats.guilds}/>`} accent="glow" />
+          <${Stat} label="Deployments" value=${html`<${CountUp} to=${stats.deployments}/>`} accent="glow" />
+          <${Stat} label="Ships · 7D" value=${html`<${CountUp} to=${stats.shipsThisWeek}/>`} hint="LAST WEEK" />
+          <${Stat} label="Tracked Rev" value=${html`<${CountUp} to=${stats.totalMrrCents} format=${fmtMoney}/>`} accent="gold" hint="MONTHLY EQUIV" />
+          <${Stat} label="Reach" value=${html`<${CountUp} to=${stats.totalUsers} format=${fmtUsers}/>`} hint="USERS COMBINED" />
         </div>
         <div style="border-top:1px solid var(--line);padding:12px 16px"><${ActivityTicker} /></div>
       </${Panel}>
@@ -1021,7 +1058,9 @@ function Deploy() {
       loadOperator(a.user.id).then(fresh => {
         if (!fresh) return;
         auth.set({ operator: fresh });
-        broadcastNros(TX.deployment(fresh, { id, kind, title: title.trim(), url: url.trim() || null, xp_awarded: XP[kind] || 0 }));
+        const xpDelta = XP[kind] || 0;
+        broadcastNros(TX.deployment(fresh, { id, kind, title: title.trim(), url: url.trim() || null, xp_awarded: xpDelta }));
+        broadcastNros(TX.xpAwarded(fresh, xpDelta, `${kind}: ${title.trim().slice(0, 80)}`));
         if (prevRank && fresh.rank && prevRank !== fresh.rank) {
           broadcastNros(TX.rankUp(fresh, prevRank, fresh.rank));
         }
@@ -1460,8 +1499,8 @@ function Dossier({ handle, deploymentId }) {
           <${Stat} label="Signal Score" value=${Number(op.signal_score||0).toFixed(1)} accent="glow" hint="0–10" />
           <${Stat} label="Total XP" value=${op.xp} />
           <${Stat} label="Deployments" value=${deps.length} />
-          <${Stat} label="Streak" value=${`${op.streak_days}d`} hint="CONSECUTIVE" />
-          <${Stat} label="Recruits" value=${op.recruit_count || 0} accent="glow" hint="OPERATORS ENLISTED" />
+          <${Stat} label="Streak" value=${op.streak_days > 0 ? html`<span class="streak-flame">${op.streak_days}d</span>` : `${op.streak_days}d`} hint="CONSECUTIVE" />
+          <${Stat} label="Recruits" value=${html`<${CountUp} to=${op.recruit_count || 0}/>`} accent="glow" hint="OPERATORS ENLISTED" />
         </div>
         ${op.recruited_by_op ? html`<div style="padding:10px 18px;border-top:1px solid var(--line);font-family:var(--mono);font-size:11px;color:var(--mute);letter-spacing:2px">RECRUITED BY <${Link} href=${`/u/${op.recruited_by_op.handle}`} style="color:var(--glow);text-decoration:underline">@${op.recruited_by_op.handle}</${Link}></div>` : null}
         <div style="padding:18px;border-top:1px solid var(--line)"><${RankProgress} rank=${op.rank} xp=${op.xp} /></div>

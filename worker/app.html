@@ -290,6 +290,33 @@ fieldset[disabled] { opacity:0.65; }
 .glyph { width:100%; height:100%; display:grid; place-items:center; }
 .glyph svg { width:100%; height:100%; display:block; filter: drop-shadow(0 0 6px currentColor); }
 
+/* STREAK FLAME (visible when streak_days > 0) */
+.streak-flame {
+  display:inline-flex; align-items:center; gap:4px;
+  font-family:var(--mono); color:#fbbf24;
+}
+.streak-flame::before {
+  content:"🔥"; font-size:14px;
+  text-shadow: 0 0 12px rgba(252,191,36,.7);
+  animation: nro-flicker 1.4s ease-in-out infinite alternate;
+}
+@keyframes nro-flicker {
+  0%   { opacity:.85; transform: translateY(0)    rotate(-2deg) scale(0.96); }
+  50%  { opacity: 1;  transform: translateY(-1px) rotate(1deg)  scale(1.04); }
+  100% { opacity:.92; transform: translateY(0)    rotate(-1deg) scale(0.98); }
+}
+
+/* REVENUE PULSE — high-MRR Wall-of-Work cards get a subtle gold accent */
+.work-card.high-rev {
+  border-color: rgba(251,191,36,.4);
+  box-shadow: 0 0 38px -10px rgba(251,191,36,.45), inset 0 0 22px -10px rgba(251,191,36,.25);
+}
+.work-card.high-rev:hover {
+  border-color: rgba(251,191,36,.7);
+  box-shadow: 0 12px 48px -16px rgba(251,191,36,.7), inset 0 0 28px -8px rgba(251,191,36,.35);
+}
+.work-card.high-rev .cover { background-image: linear-gradient(135deg, rgba(251,191,36,.16), rgba(167,139,250,.08)); }
+
 /* WALL OF WORK · portfolio card */
 .work-card {
   display:flex; flex-direction:column;

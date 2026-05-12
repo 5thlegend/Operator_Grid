@@ -1,6 +1,41 @@
-# NRO → NROS Integration Manifest
+# NRO ↔ NROS Federation Manifest
 
-> How `nextrealm-operators.dankpenta.workers.dev` (this repo) fits cleanly into `nextrealmos.pages.dev` (`NROS_KERNEL`).
+> How `nextrealm-operators.dankpenta.workers.dev` (this repo) federates with `nextrealmos.pages.dev` (`NROS_KERNEL`).
+
+## 🛡 Sovereign Realm Directive (LOCKED)
+
+> **Operator Grid is being federated into NROS. Do NOT rebuild Operator Grid. Do NOT convert it into NROS.**
+>
+> Operator Grid remains sovereign and acts as:
+> - civilization surface layer
+> - public signal network
+> - operator visibility system
+> - influence map
+> - deployment visualization layer
+>
+> Integrate ONLY:
+> 1. Federation SDK
+> 2. Universal operator auth
+> 3. Event emission hooks
+> 4. XP synchronization
+> 5. Mission synchronization
+> 6. Realm registration
+>
+> Do NOT alter the tactical identity or core architecture.
+> Operator Grid consumes NROS infrastructure while remaining an independent realm.
+
+This directive supersedes the earlier "Federation (Option A)" vs "Sub-mount" vs "Merge" discussion. Federation is chosen, sovereignty is preserved.
+
+## Status of the 6 integration items
+
+| # | Item | Status | Where |
+|---|---|---|---|
+| 1 | Federation SDK | ✅ shipped | `worker/nros.js` — `makeNros(env)` factory, no-op when `NROS_API_KEY` not set |
+| 2 | Universal operator auth | ⚠️ partial | Shared Supabase project gives shared `auth.users`. Need NROS callsign ↔ NRO handle mapping. |
+| 3 | Event emission hooks | ✅ shipped | `worker/app.js` `TX.*` shapes + `broadcastNros()` + `/api/nros/broadcast` Worker proxy. Wired on onboarding/deploy/rank-up/guild-forge. |
+| 4 | XP synchronization | ⚠️ partial | Embedded in `MISSION_COMPLETED` metadata. Need explicit `xp.award()` call too. |
+| 5 | Mission synchronization | ❌ pending | NROS has `missions` table; NRO needs a consumer + `MISSION_ACCEPTED` event. |
+| 6 | Realm registration | ❌ pending | Awaiting `NROS_API_KEY` from `nextrealmos.pages.dev` realm registration. |
 
 ---
 
