@@ -170,6 +170,48 @@ def upsert_guild(g, by_handle):
         else: print(f"    + @{mh} → {role}")
     return gid
 
+SEED_PROJECTS = [
+    # ghostwire
+    ("ghostwire",  "edge-broadcast", "Edge Broadcast",     "1-click realtime fanout across CF Workers", "subscription", 240000, None, None, 1240, ["Cloudflare","Hono","Postgres"], "https://images.unsplash.com/photo-1518770660439-4636190af475?w=1200&q=80", True),
+    ("ghostwire",  "tilt-pad",       "Tilt Pad",           "Side-project monetization toolkit",         "lifetime",     None,   None, 4900, 380,  ["Next.js","Stripe","Supabase"], None, True),
+    # nullstack
+    ("nullstack",  "stack-edge",     "Stack Edge",         "Postgres-on-the-edge platform",             "subscription", 840000, None, None, 3400, ["Postgres","Cloudflare","Hono"], None, True),
+    ("nullstack",  "fork-script",    "Fork Script",        "Open-source migration toolkit",             "open_source",  None,   None, None, 8200, ["TypeScript","CLI"], None, False),
+    # cyberforge
+    ("cyberforge", "worker-uplink",  "Worker Uplink",      "Bidirectional WS for CF Workers",           "subscription", 95000,  None, None, 540,  ["Cloudflare","WebSockets"], None, True),
+    ("cyberforge", "core-cdn",       "Core CDN",           "White-labeled cache layer for indie SaaS",  "whitelabel",   None,   None, 2400000, 6,    ["Cloudflare","Workers"], None, True),
+    # signalbloom
+    ("signalbloom","first-thousand", "First Thousand",     "Newsletter growth tactics, free",           "free",         None,   None, None, 82,   ["Substack"], None, True),
+    # stormcaster
+    ("stormcaster","sentinel-os",    "Sentinel OS",        "Tactical command terminal for solo founders","subscription",1850000,None,None,17400, ["Next.js","Postgres","OpenAI"], "https://images.unsplash.com/photo-1518770660439-4636190af475?w=1200&q=80", True),
+    ("stormcaster","ghostfeed",      "Ghostfeed",          "Acquired by Substack 2025",                 "acquired",     None,   None, 425000000, 0,    ["Postgres","Stripe"], None, True),
+    ("stormcaster","brutal-ui",      "Brutal UI",          "Component library, open source",            "open_source",  None,   None, None, 18000,["Tailwind","React"], None, False),
+    # neonpoet
+    ("neonpoet",   "neon-stripe",    "Neon Stripe",        "Themed Stripe checkout templates",          "lifetime",     None,   None, 14900, 410, ["Stripe","Next.js"], None, True),
+    ("neonpoet",   "city-blocks",    "City Blocks",        "Brutalist landing-page kit",                "lifetime",     None,   None, 7900, 220, ["Tailwind","HTML"], None, False),
+    # oracleforge
+    ("oracleforge","oracle-rt",      "Oracle Realtime",    "Realtime postgres sync for edge runtimes",  "subscription", 1240000, None, None, 2680, ["Postgres","Cloudflare"], None, True),
+    ("oracleforge","prophecy-kit",   "Prophecy Kit",       "AI-assisted system-design toolkit",         "lifetime",     None,   None, 24900, 540, ["OpenAI","Next.js"], None, True),
+    ("oracleforge","mvp-zero",       "MVP Zero",           "White-labeled MVP starter, sold per-tenant", "whitelabel",   None,   None, 600000, 11,   ["Next.js","Supabase"], None, False),
+]
+def seed_projects(by_handle):
+    placed = 0
+    for handle, slug, name, tagline, monetization, mrr_cents, arr_cents, last_sale, users, stack, cover, featured in SEED_PROJECTS:
+        op_id = by_handle.get(handle)
+        if not op_id: continue
+        row = {
+            "operator_id": op_id, "slug": slug, "name": name, "tagline": tagline,
+            "status": "launched" if monetization in ("acquired", "whitelabel") else "active",
+            "stack": stack, "cover_url": cover, "monetization": monetization,
+            "mrr_cents": mrr_cents or 0, "arr_cents": arr_cents or 0, "last_sale_cents": last_sale or 0,
+            "users_count": users or 0, "featured": featured,
+            "link_live": f"https://{slug}.example.com",
+        }
+        st, d = req("POST", "/rest/v1/projects?on_conflict=operator_id,slug", row, headers={"Prefer": "resolution=merge-duplicates,return=minimal"})
+        if st in (200, 201, 204): placed += 1
+        else: print(f"    ✗ project {handle}/{slug}: {st} {d}")
+    print(f"  placed {placed} portfolio projects across {len({p[0] for p in SEED_PROJECTS})} operators")
+
 def seed_deployments(by_handle):
     print()
     handles = list(by_handle.keys())
@@ -210,6 +252,9 @@ def main():
     print("\n=== SEEDING GUILDS ===")
     for g in GUILDS:
         upsert_guild(g, by_handle)
+
+    print("\n=== SEEDING PROJECTS (Wall of Work) ===")
+    seed_projects(by_handle)
 
     print("\n=== SEEDING DEPLOYMENTS ===")
     seed_deployments(by_handle)

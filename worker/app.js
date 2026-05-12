@@ -391,6 +391,101 @@ function Nav({ variant = "public" }) {
     </header>`;
 }
 
+// ====================================================================
+// WALL OF WORK · portfolio helpers + card component
+// ====================================================================
+const MONETIZATION_LABELS = {
+  subscription: { label: "Subscription", color: "#67e8f9", pillBg: "rgba(103,232,249,.1)", pillBorder: "rgba(103,232,249,.5)" },
+  lifetime:     { label: "Lifetime",     color: "#a78bfa", pillBg: "rgba(167,139,250,.1)", pillBorder: "rgba(167,139,250,.5)" },
+  whitelabel:   { label: "White-label",  color: "#f59e0b", pillBg: "rgba(245,158,11,.1)",  pillBorder: "rgba(245,158,11,.5)" },
+  acquired:     { label: "Acquired",     color: "#fbbf24", pillBg: "rgba(251,191,36,.1)",  pillBorder: "rgba(251,191,36,.6)" },
+  open_source:  { label: "Open Source",  color: "#34d399", pillBg: "rgba(52,211,153,.1)",  pillBorder: "rgba(52,211,153,.5)" },
+  free:         { label: "Free",         color: "#9a9aa3", pillBg: "rgba(154,154,163,.1)", pillBorder: "rgba(154,154,163,.4)" },
+};
+function fmtMoney(cents) {
+  if (!cents || cents <= 0) return "—";
+  const n = cents / 100;
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
+  if (n >= 1_000)     return `$${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  return `$${Math.round(n)}`;
+}
+function fmtUsers(n) {
+  if (!n || n <= 0) return "—";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000)     return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  return String(n);
+}
+function WorkCard({ p }) {
+  const mon = MONETIZATION_LABELS[p.monetization] || MONETIZATION_LABELS.free;
+  const cover = p.cover_url || null;
+  const showMrr = p.mrr_cents > 0;
+  const showArr = !showMrr && p.arr_cents > 0;
+  const showLifetime = !showMrr && !showArr && p.last_sale_cents > 0;
+  const revLabel = showMrr ? "MRR" : showArr ? "ARR" : showLifetime ? "SOLD" : "REV";
+  const revValue = showMrr ? fmtMoney(p.mrr_cents) : showArr ? fmtMoney(p.arr_cents) : showLifetime ? fmtMoney(p.last_sale_cents) : "—";
+  const usersValue = fmtUsers(p.users_count);
+  const goldRev = p.monetization === 'acquired' || p.monetization === 'whitelabel';
+  return html`<article class="work-card">
+    <div class="cover" style=${cover ? `background-image:url(${cover})` : ""}>
+      <span class="status-pill" style=${`color:${mon.color};border-color:${mon.pillBorder};background:${mon.pillBg}`}>${mon.label}</span>
+    </div>
+    <div class="body">
+      <h3>${p.name}</h3>
+      ${p.tagline ? html`<div class="tagline">${p.tagline}</div>` : null}
+      ${p.stack?.length ? html`<div class="stack">${p.stack.slice(0, 6).map(s => html`<span key=${s}>${s}</span>`)}</div>` : null}
+    </div>
+    <div class="stats">
+      <div><div class="lbl">${revLabel}</div><div class=${`val ${goldRev ? 'gold' : ''} ${revValue === '—' ? 'dim' : ''}`}>${revValue}</div></div>
+      <div><div class="lbl">Users</div><div class=${`val ${usersValue === '—' ? 'dim' : ''}`}>${usersValue}</div></div>
+      <div><div class="lbl">Status</div><div class="val dim" style="text-transform:uppercase;font-size:11px">${p.status}</div></div>
+    </div>
+    ${(p.link_live || p.link_repo || p.buyer) ? html`<div class="links">
+      ${p.link_live ? html`<a href=${p.link_live} target="_blank" rel="noopener noreferrer">↗ LIVE</a>` : null}
+      ${p.link_repo ? html`<a href=${p.link_repo} target="_blank" rel="noopener noreferrer">⌥ REPO</a>` : null}
+      ${p.buyer ? html`<span style="margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--mute);letter-spacing:1.5px">→ ${p.buyer}</span>` : null}
+    </div>` : null}
+  </article>`;
+}
+
+// Inline-SVG glyphs per rank tier. Used in operator markers on the Signal Map.
+function RankGlyph({ rank }) {
+  switch (rank) {
+    case "SOVEREIGN":
+      // Crown over hex — apex
+      return html`<svg viewBox="0 0 24 24" fill="currentColor" style="filter:drop-shadow(0 0 6px currentColor)">
+        <polygon points="12,2 21,7 21,17 12,22 3,17 3,7" fill="currentColor" opacity="0.95"/>
+        <path d="M6 8 L9 5 L12 9 L15 5 L18 8 L18 11 L6 11 Z" fill="rgba(10,10,10,.65)"/>
+        <circle cx="9" cy="6" r="0.8" fill="currentColor"/>
+        <circle cx="12" cy="9.5" r="0.8" fill="currentColor"/>
+        <circle cx="15" cy="6" r="0.8" fill="currentColor"/>
+      </svg>`;
+    case "COMMANDER":
+      // Filled shield with chevron
+      return html`<svg viewBox="0 0 24 24" fill="currentColor" style="filter:drop-shadow(0 0 5px currentColor)">
+        <path d="M12 2 L21 5 L21 12 C21 17 17 21 12 22 C7 21 3 17 3 12 L3 5 Z" fill="currentColor" opacity="0.92"/>
+        <path d="M7 10 L12 6 L17 10 L17 13 L12 9 L7 13 Z" fill="rgba(10,10,10,.7)"/>
+      </svg>`;
+    case "ARCHITECT":
+      // Filled diamond
+      return html`<svg viewBox="0 0 24 24" fill="currentColor" style="filter:drop-shadow(0 0 4px currentColor)">
+        <polygon points="12,2 22,12 12,22 2,12" fill="currentColor" opacity="0.92"/>
+        <polygon points="12,7 17,12 12,17 7,12" fill="rgba(10,10,10,.55)"/>
+      </svg>`;
+    case "OPERATOR":
+      // Filled hexagon
+      return html`<svg viewBox="0 0 24 24" fill="currentColor" style="filter:drop-shadow(0 0 3px currentColor)">
+        <polygon points="12,2 21,7 21,17 12,22 3,17 3,7" fill="currentColor" opacity="0.9"/>
+        <polygon points="12,7 17,9.5 17,14.5 12,17 7,14.5 7,9.5" fill="rgba(10,10,10,.55)"/>
+      </svg>`;
+    default:
+      // INITIATE — thin ring
+      return html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="9" opacity="0.9"/>
+        <circle cx="12" cy="12" r="2.5" fill="currentColor"/>
+      </svg>`;
+  }
+}
+
 function GuildBadge({ guild, size = "md" }) {
   if (!guild) return null;
   const padding = size === "sm" ? "2px 8px" : "4px 12px";
@@ -1109,37 +1204,62 @@ function Projects() {
   const [showForm, setShowForm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
-  const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
-  const [tagline, setTagline] = useState("");
-  const [status, setStatus] = useState("active");
-  const [stack, setStack] = useState([]);
-  const [linkLive, setLinkLive] = useState("");
-  const [linkRepo, setLinkRepo] = useState("");
+  const [f, setF] = useState({
+    name: "", slug: "", tagline: "", status: "active", stack: [],
+    link_live: "", link_repo: "", cover_url: "",
+    monetization: "free", mrr: "", arr: "", last_sale: "",
+    users_count: "", buyer: "", featured: true,
+  });
+  const u = (k, v) => setF(s => ({ ...s, [k]: v }));
   useEffect(() => {
     if (!a.loading && !a.user) navigate("/login");
     if (!a.loading && a.user && !a.operator) navigate("/onboarding");
   }, [a.loading, a.user, a.operator]);
   useEffect(() => {
     if (!a.user) return;
-    supa.from("projects").select("*").eq("operator_id", a.user.id).order("created_at", { ascending: false }).then(({ data }) => {
+    supa.from("projects").select("*").eq("operator_id", a.user.id).order("featured", { ascending: false }).order("mrr_cents", { ascending: false }).then(({ data }) => {
       setProjects(data || []);
       setShowForm((data || []).length === 0);
     });
   }, [a.user?.id]);
-  function reset() { setName(""); setSlug(""); setTagline(""); setStack([]); setStatus("active"); setLinkLive(""); setLinkRepo(""); }
+  function reset() {
+    setF({ name: "", slug: "", tagline: "", status: "active", stack: [],
+      link_live: "", link_repo: "", cover_url: "",
+      monetization: "free", mrr: "", arr: "", last_sale: "",
+      users_count: "", buyer: "", featured: true });
+  }
   async function submit(e) {
-    e.preventDefault(); setErr(null); setBusy(true);
-    const sl = slug.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40);
-    if (!/^[a-z0-9-]{2,40}$/.test(sl)) { setErr("SLUG: 2–40 chars, lowercase, dashes."); setBusy(false); return; }
-    const { data, error } = await supa.from("projects").insert({
-      operator_id: a.user.id, name: name.trim().slice(0, 60), slug: sl,
-      tagline: tagline.trim().slice(0, 140) || null, status, stack: stack.slice(0, 12),
-      link_live: linkLive.trim() || null, link_repo: linkRepo.trim() || null,
-    }).select("*").single();
-    setBusy(false);
-    if (error) { setErr(error.message); return; }
-    setProjects(p => [data, ...p]); setShowForm(false); reset();
+    e.preventDefault();
+    if (busy) return;
+    setErr(null); setBusy(true);
+    try {
+      const sl = f.slug.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40);
+      if (!/^[a-z0-9-]{2,40}$/.test(sl)) throw new Error("SLUG: 2–40 chars, lowercase, dashes.");
+      if (!f.name.trim()) throw new Error("NAME REQUIRED.");
+      const toCents = (v) => { const n = parseFloat(v); return isFinite(n) && n >= 0 ? Math.round(n * 100) : 0; };
+      const { data, error } = await supa.from("projects").insert({
+        operator_id: a.user.id,
+        name: f.name.trim().slice(0, 60),
+        slug: sl,
+        tagline: f.tagline.trim().slice(0, 140) || null,
+        status: f.status,
+        stack: f.stack.slice(0, 12),
+        link_live: f.link_live.trim() || null,
+        link_repo: f.link_repo.trim() || null,
+        cover_url: f.cover_url.trim() || null,
+        monetization: f.monetization,
+        mrr_cents: toCents(f.mrr),
+        arr_cents: toCents(f.arr),
+        last_sale_cents: toCents(f.last_sale),
+        users_count: Math.max(0, parseInt(f.users_count) || 0),
+        buyer: f.buyer.trim() || null,
+        featured: !!f.featured,
+      }).select("*").single();
+      if (error) throw new Error(error.message);
+      setProjects(p => [data, ...p]); setShowForm(false); reset();
+    } catch (e) {
+      setErr(String(e?.message || e));
+    } finally { setBusy(false); }
   }
   async function del(id, projName) {
     if (!confirm(`Delete project ${projName}? Deployments will be unlinked.`)) return;
@@ -1149,41 +1269,65 @@ function Projects() {
   if (!a.operator) return html`<${Nav} /><main class="container center"><span class="tag">// LOADING…</span></main>`;
   return html`
     <${Nav} variant="command" />
-    <main class="container" style="max-width:840px;padding:40px 24px">
-      <span class="tag">// PROJECTS</span>
-      <h1 style="font-family:var(--display);font-size:32px;font-weight:700;margin:8px 0 8px">Project registry.</h1>
-      <p style="color:var(--dim);margin:0 0 24px">Group your deployments under named operations. Public on your dossier.</p>
+    <main class="container" style="max-width:960px;padding:40px 24px">
+      <span class="tag">// WALL OF WORK</span>
+      <h1 style="font-family:var(--display);font-size:32px;font-weight:700;margin:8px 0 8px">Your portfolio.</h1>
+      <p style="color:var(--dim);margin:0 0 24px">Every product you've shipped, sold, white-labeled, or acquired. Public on your dossier.</p>
+
+      ${projects.length > 0 ? html`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-bottom:24px">
+        ${projects.map(p => html`<div key=${p.id} style="position:relative">
+          <${WorkCard} p=${p}/>
+          <button onClick=${() => del(p.id, p.name)} aria-label=${`Delete ${p.name}`} title=${`Delete ${p.name}`} style="position:absolute;top:6px;right:6px;z-index:3;width:24px;height:24px;border:1px solid var(--line2);background:rgba(10,10,10,.85);color:var(--mute);cursor:pointer;font-size:14px;line-height:0">✕</button>
+        </div>`)}
+      </div>` : null}
+
       <${Panel} corners=${true}>
-        <div class="panel-head"><span class="lbl">// REGISTRY</span></div>
-        <div style="padding:20px">
-          ${projects.map(p => html`<div key=${p.id} style="display:flex;align-items:start;gap:14px;border:1px solid var(--line);background:rgba(17,17,20,.6);padding:14px;margin-bottom:10px">
-            <div style="flex:1;min-width:0">
-              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-family:var(--display);font-size:17px">${p.name}</span><span style="font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--mute);text-transform:uppercase">${p.status}</span></div>
-              ${p.tagline ? html`<p style="color:var(--dim);margin:6px 0 0;font-size:13px">${p.tagline}</p>` : null}
-              ${p.stack?.length ? html`<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:4px">${p.stack.map(s => html`<span style="border:1px solid var(--line2);padding:2px 8px;font-family:var(--mono);font-size:9px;color:var(--dim)">${s}</span>`)}</div>` : null}
+        <div class="panel-head"><span class="lbl">// ${showForm ? "ADD WORK" : "EXPAND PORTFOLIO"}</span>${!showForm ? html`<button class="btn btn-glow" style="padding:4px 12px;font-size:10px" onClick=${() => setShowForm(true)}>+ NEW PROJECT</button>` : null}</div>
+        ${showForm ? html`<form onSubmit=${submit} style="padding:20px">
+          <fieldset disabled=${busy} style="border:0;padding:0;margin:0">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <label class="field"><span class="lbl">Name</span><input class="input" required value=${f.name} onInput=${e => { u("name", e.target.value); if (!f.slug) u("slug", e.target.value.toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40)); }} maxLength=${60}/></label>
+              <label class="field"><span class="lbl">Slug (lowercase-dashes)</span><input class="input" style="font-family:var(--mono)" required value=${f.slug} onInput=${e => u("slug", e.target.value.toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40))} maxLength=${40}/></label>
             </div>
-            <button onClick=${() => del(p.id, p.name)} aria-label=${`Delete project ${p.name}`} style="background:none;border:none;cursor:pointer;color:var(--mute);font-size:18px;padding:4px 8px;line-height:1" title=${`Delete ${p.name}`}>✕</button>
-          </div>`)}
-          ${projects.length === 0 && !showForm ? html`<div style="border:1px solid var(--line2);background:rgba(0,0,0,.3);padding:32px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--mute)">NO PROJECTS YET.</div>` : null}
-          ${!showForm ? html`<button class="btn btn-glow" onClick=${() => setShowForm(true)} style="margin-top:10px">+ NEW PROJECT</button>`
-            : html`<form onSubmit=${submit} style="border:1px solid var(--line);background:rgba(0,0,0,.3);padding:18px;margin-top:10px">
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-                  <label class="field"><span class="lbl">Name</span><input class="input" required value=${name} onInput=${e => { setName(e.target.value); if (!slug) setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]+/g,"-").slice(0,40)); }} maxLength=${60}/></label>
-                  <label class="field"><span class="lbl">Slug (lowercase-dashes)</span><input class="input" style="font-family:var(--mono)" required value=${slug} onInput=${e => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]+/g,"-").slice(0,40))} maxLength=${40}/></label>
-                </div>
-                <label class="field"><span class="lbl">Tagline</span><input class="input" value=${tagline} onInput=${e => setTagline(e.target.value)} maxLength=${140}/></label>
-                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
-                  <label class="field"><span class="lbl">Status</span><select class="select" value=${status} onChange=${e => setStatus(e.target.value)}><option value="active">active</option><option value="launched">launched</option><option value="archived">archived</option></select></label>
-                  <label class="field"><span class="lbl">Live URL</span><input class="input" type="url" value=${linkLive} onInput=${e => setLinkLive(e.target.value)} placeholder="https://"/></label>
-                  <label class="field"><span class="lbl">Repo URL</span><input class="input" type="url" value=${linkRepo} onInput=${e => setLinkRepo(e.target.value)} placeholder="https://github.com/..."/></label>
-                </div>
-                <div class="field"><span class="lbl">Stack (click to toggle)</span>
-                  <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">${STACK_OPTIONS.map(s => { const on = stack.includes(s); return html`<button type="button" key=${s} onClick=${() => setStack(arr => on ? arr.filter(x => x !== s) : [...arr, s])} style=${`border:1px solid ${on ? 'var(--glow)' : 'var(--line2)'};background:${on ? 'var(--glowsoft)' : 'transparent'};padding:4px 10px;font-family:var(--mono);font-size:10px;color:${on ? 'var(--glow)' : 'var(--dim)'};cursor:pointer`}>${s}</button>`; })}</div>
-                </div>
-                ${err ? html`<p style="font-family:var(--mono);font-size:11px;color:var(--danger)">${err}</p>` : null}
-                <div style="display:flex;gap:10px;align-items:center"><button class="btn btn-primary" type="submit" disabled=${busy || !name || !slug}>${busy ? "SAVING…" : "SAVE PROJECT"}</button><button type="button" class="btn" onClick=${() => { setShowForm(false); reset(); }}>CANCEL</button></div>
-              </form>`}
-        </div>
+            <label class="field"><span class="lbl">Tagline</span><input class="input" value=${f.tagline} onInput=${e => u("tagline", e.target.value)} maxLength=${140} placeholder="One line. What this is."/></label>
+            <label class="field"><span class="lbl">Cover Image URL</span><input class="input" value=${f.cover_url} onInput=${e => u("cover_url", e.target.value)} placeholder="https://image.url (16:9 looks best)"/></label>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+              <label class="field"><span class="lbl">Status</span><select class="select" value=${f.status} onChange=${e => u("status", e.target.value)}><option value="active">Active</option><option value="launched">Launched</option><option value="archived">Archived</option></select></label>
+              <label class="field"><span class="lbl">Live URL</span><input class="input" type="url" value=${f.link_live} onInput=${e => u("link_live", e.target.value)} placeholder="https://"/></label>
+              <label class="field"><span class="lbl">Repo URL</span><input class="input" type="url" value=${f.link_repo} onInput=${e => u("link_repo", e.target.value)} placeholder="https://github.com/..."/></label>
+            </div>
+
+            <div style="border-top:1px solid var(--line);padding-top:16px;margin-top:8px">
+              <div class="lbl" style="margin-bottom:10px">// MONETIZATION & METRICS</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <label class="field"><span class="lbl">Monetization</span>
+                  <select class="select" value=${f.monetization} onChange=${e => u("monetization", e.target.value)}>
+                    <option value="free">Free / No revenue</option>
+                    <option value="subscription">Subscription (MRR/ARR)</option>
+                    <option value="lifetime">Lifetime sales</option>
+                    <option value="whitelabel">White-label (licensed)</option>
+                    <option value="acquired">Acquired / sold</option>
+                    <option value="open_source">Open Source</option>
+                  </select>
+                </label>
+                <label class="field"><span class="lbl">Users</span><input class="input" type="number" min="0" value=${f.users_count} onInput=${e => u("users_count", e.target.value)} placeholder="0"/></label>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+                <label class="field"><span class="lbl">MRR ($)</span><input class="input" type="number" min="0" step="any" value=${f.mrr} onInput=${e => u("mrr", e.target.value)} placeholder="0"/></label>
+                <label class="field"><span class="lbl">ARR ($)</span><input class="input" type="number" min="0" step="any" value=${f.arr} onInput=${e => u("arr", e.target.value)} placeholder="0"/></label>
+                <label class="field"><span class="lbl">${f.monetization === 'acquired' ? 'Sale Price ($)' : f.monetization === 'whitelabel' ? 'License Fee ($)' : 'Last Sale ($)'}</span><input class="input" type="number" min="0" step="any" value=${f.last_sale} onInput=${e => u("last_sale", e.target.value)} placeholder="0"/></label>
+              </div>
+              ${(f.monetization === 'whitelabel' || f.monetization === 'acquired') ? html`<label class="field"><span class="lbl">Buyer / Licensee</span><input class="input" value=${f.buyer} onInput=${e => u("buyer", e.target.value)} placeholder="Company name or operator"/></label>` : null}
+              <label style="display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;color:var(--dim);letter-spacing:2px;cursor:pointer"><input type="checkbox" checked=${f.featured} onChange=${e => u("featured", e.target.checked)}/> FEATURED ON DOSSIER</label>
+            </div>
+
+            <div class="field" style="margin-top:14px"><span class="lbl">Stack (click to toggle)</span>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">${STACK_OPTIONS.map(s => { const on = f.stack.includes(s); return html`<button type="button" key=${s} onClick=${() => u("stack", on ? f.stack.filter(x => x !== s) : [...f.stack, s])} style=${`border:1px solid ${on ? 'var(--glow)' : 'var(--line2)'};background:${on ? 'var(--glowsoft)' : 'transparent'};padding:4px 10px;font-family:var(--mono);font-size:10px;color:${on ? 'var(--glow)' : 'var(--dim)'};cursor:pointer`}>${s}</button>`; })}</div>
+            </div>
+            ${err ? html`<p style="font-family:var(--mono);font-size:11px;color:var(--danger)">${err}</p>` : null}
+            <div style="display:flex;gap:10px;align-items:center;margin-top:14px"><button class="btn btn-primary" type="submit" disabled=${busy || !f.name || !f.slug}>${busy ? "SAVING…" : "SAVE PROJECT"}</button><button type="button" class="btn" onClick=${() => { setShowForm(false); reset(); }}>CANCEL</button></div>
+          </fieldset>
+        </form>` : null}
       </${Panel}>
     </main>`;
 }
@@ -1263,13 +1407,16 @@ function Dossier({ handle, deploymentId }) {
       </${Panel}>
 
       ${projects.length > 0 ? html`<${Panel} style="margin-top:24px">
-        <div class="panel-head"><span class="lbl">// PROJECTS</span><span class="hint">${projects.length} ACTIVE</span></div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1px;background:var(--line)">
-          ${projects.map(p => html`<div style="padding:16px;background:var(--surface)">
-            <div style="display:flex;justify-content:space-between;align-items:start"><h3 style="font-family:var(--display);font-size:17px;margin:0">${p.name}</h3><span style="font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--mute);text-transform:uppercase">${p.status}</span></div>
-            ${p.tagline ? html`<p style="color:var(--dim);font-size:13px;margin:6px 0 0">${p.tagline}</p>` : null}
-            ${p.stack?.length ? html`<div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:4px">${p.stack.map(s => html`<span style="border:1px solid var(--line2);background:rgba(0,0,0,.4);padding:2px 8px;font-family:var(--mono);font-size:9px;color:var(--dim)">${s}</span>`)}</div>` : null}
-          </div>`)}
+        <div class="panel-head"><span class="lbl">// WALL OF WORK</span><span class="hint">${projects.length} ${projects.length === 1 ? "PROJECT" : "PROJECTS"}</span></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;padding:18px">
+          ${projects.slice().sort((a, b) => {
+            // Featured first, then by revenue, then by users
+            if ((b.featured ? 1 : 0) !== (a.featured ? 1 : 0)) return (b.featured ? 1 : 0) - (a.featured ? 1 : 0);
+            const ar = (a.mrr_cents || 0) * 12 + (a.arr_cents || 0) + (a.last_sale_cents || 0);
+            const br = (b.mrr_cents || 0) * 12 + (b.arr_cents || 0) + (b.last_sale_cents || 0);
+            if (br !== ar) return br - ar;
+            return (b.users_count || 0) - (a.users_count || 0);
+          }).map(p => html`<${WorkCard} key=${p.id} p=${p}/>`)}
         </div>
       </${Panel}>` : null}
 
@@ -1526,49 +1673,57 @@ function SignalMap() {
     for (const o of opList) {
       if (!o.guild || o.lat == null || o.lng == null) continue;
       const g = o.guild;
-      if (!by[g.id]) by[g.id] = { guild: g, members: [], lats: [], lngs: [] };
+      if (!by[g.id]) by[g.id] = { guild: g, members: [], pts: [] };
       by[g.id].members.push(o);
-      by[g.id].lats.push(o.lat);
-      by[g.id].lngs.push(o.lng);
+      by[g.id].pts.push([o.lng, o.lat]);
     }
-    // Compute centroid + approximate radius (km) for each guild's territory bubble.
     return Object.values(by).map(c => {
-      const lat = c.lats.reduce((s, n) => s + n, 0) / c.lats.length;
-      const lng = c.lngs.reduce((s, n) => s + n, 0) / c.lngs.length;
-      // Haversine to find farthest member from centroid; add 20% buffer.
-      const R = 6371;
-      let maxKm = 60; // floor radius even for single-member guilds
-      for (let i = 0; i < c.lats.length; i++) {
-        const dLat = (c.lats[i] - lat) * Math.PI / 180;
-        const dLng = (c.lngs[i] - lng) * Math.PI / 180;
-        const a = Math.sin(dLat/2)**2 + Math.cos(lat * Math.PI/180) * Math.cos(c.lats[i] * Math.PI/180) * Math.sin(dLng/2)**2;
-        const d = 2 * R * Math.asin(Math.sqrt(a));
-        if (d > maxKm) maxKm = d;
-      }
-      return { guild: c.guild, members: c.members, lat, lng, radiusKm: maxKm * 1.25 };
+      const hull = convexHull(c.pts);
+      const buffered = bufferHull(hull, 1.05);
+      const polygon = (c.pts.length >= 3 && buffered.length >= 3) ? [...buffered, buffered[0]] : null;
+      const lat = c.pts.reduce((s, p) => s + p[1], 0) / c.pts.length;
+      const lng = c.pts.reduce((s, p) => s + p[0], 0) / c.pts.length;
+      return { guild: c.guild, members: c.members, polygon, lat, lng };
     });
   }, [opList]);
+
+  // --- convex hull helpers (Andrew's monotone chain) ---
+  function convexHull(points) {
+    const sorted = points.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    if (sorted.length <= 1) return sorted;
+    const cross = (O, A, B) => (A[0] - O[0]) * (B[1] - O[1]) - (A[1] - O[1]) * (B[0] - O[0]);
+    const lower = [];
+    for (const p of sorted) {
+      while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+      lower.push(p);
+    }
+    const upper = [];
+    for (let i = sorted.length - 1; i >= 0; i--) {
+      const p = sorted[i];
+      while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+      upper.push(p);
+    }
+    upper.pop(); lower.pop();
+    return lower.concat(upper);
+  }
+  function bufferHull(hull, scale) {
+    if (hull.length === 0) return hull;
+    const cx = hull.reduce((s, p) => s + p[0], 0) / hull.length;
+    const cy = hull.reduce((s, p) => s + p[1], 0) / hull.length;
+    return hull.map(([x, y]) => [cx + (x - cx) * scale, cy + (y - cy) * scale]);
+  }
 
   // Paint guild territory polygons + connection lines (supply-route web).
   useEffect(() => {
     const m = mapRef.current; if (!m || !ready) return;
-    // Build features as Polygon approximations of circles (64-sided).
-    const features = guildClusters.map(c => {
-      const points = [];
-      const steps = 64;
-      const R = 6371;
-      const latStep = (c.radiusKm / R) * (180 / Math.PI);
-      const lngStep = (c.radiusKm / (R * Math.cos(c.lat * Math.PI / 180))) * (180 / Math.PI);
-      for (let i = 0; i <= steps; i++) {
-        const t = (i / steps) * Math.PI * 2;
-        points.push([c.lng + Math.cos(t) * lngStep, c.lat + Math.sin(t) * latStep]);
-      }
-      return {
+    // Convex-hull polygons — hugs the member perimeter (3+ members needed).
+    const features = guildClusters
+      .filter(c => c.polygon)
+      .map(c => ({
         type: "Feature",
         properties: { id: c.guild.id, color: c.guild.color, name: c.guild.name, sigil: c.guild.sigil, count: c.members.length },
-        geometry: { type: "Polygon", coordinates: [points] },
-      };
-    });
+        geometry: { type: "Polygon", coordinates: [c.polygon] },
+      }));
     const polyData = { type: "FeatureCollection", features };
 
     // Connection lines: full mesh between same-guild members. Two-layer render
@@ -1657,19 +1812,22 @@ function SignalMap() {
 
       <div class="mapwrap">
         <div id="map"></div>
-        ${guildClusters.length > 0 ? html`<div style="position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:6;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:96%;pointer-events:auto">
+        ${guildClusters.length > 0 ? html`<div style="position:absolute;top:18px;left:50%;transform:translateX(-50%);z-index:6;display:flex;gap:10px;flex-wrap:wrap;justify-content:center;max-width:96%;pointer-events:auto">
           ${guildClusters.slice().sort((a,b) => b.members.reduce((s,m)=>s+(m.signal_score||0),0) - a.members.reduce((s,m)=>s+(m.signal_score||0),0)).map(c => {
             const totalSignal = c.members.reduce((s,m) => s + (m.signal_score || 0), 0);
             const totalMomentum = c.members.reduce((s,m) => s + (m.momentum || 0), 0);
-            return html`<${Link} key=${c.guild.id} href=${`/guild/${c.guild.slug}`} style=${`display:inline-flex;align-items:center;gap:8px;padding:5px 12px;border:1px solid ${c.guild.color}66;background:${c.guild.color}1a;backdrop-filter:blur(6px);font-family:var(--mono);font-size:10px;letter-spacing:2px;color:${c.guild.color};box-shadow:0 0 24px -8px ${c.guild.color}`}>
-              <span style="font-size:13px">${c.guild.sigil}</span>
-              <span style="text-transform:uppercase">${c.guild.name}</span>
-              <span style="color:var(--mute)">·</span>
-              <span>${c.members.length} OPS</span>
-              <span style="color:var(--mute)">·</span>
-              <span>S ${totalSignal.toFixed(1)}</span>
-              <span style="color:var(--mute)">·</span>
-              <span>M ${totalMomentum}</span>
+            return html`<${Link} key=${c.guild.id} href=${`/guild/${c.guild.slug}`} class="faction-chip" style=${`--g:${c.guild.color}`}>
+              <span class="fc-sigil">${c.guild.sigil}</span>
+              <span class="fc-body">
+                <span class="fc-name">${c.guild.name}</span>
+                <span class="fc-stats">
+                  <span><b>${c.members.length}</b> OPS</span>
+                  <span class="fc-sep">·</span>
+                  <span>S <b>${totalSignal.toFixed(1)}</b></span>
+                  <span class="fc-sep">·</span>
+                  <span>M <b>${totalMomentum}</b></span>
+                </span>
+              </span>
             </${Link}>`;
           })}
         </div>` : null}
@@ -1692,13 +1850,16 @@ function SignalMap() {
             const color = o.guild?.color || rankFill[o.rank] || "#67e8f9";
             // Larger baseline so zero-signal INITIATEs are still readable on the map.
             const r = 12 + Math.min(18, o.signal_score * 2.2) + (o.rank === "SOVEREIGN" ? 8 : o.rank === "COMMANDER" ? 5 : o.rank === "ARCHITECT" ? 2 : 0);
+            const glyphSize = Math.max(14, r * 0.78);
             return html`<a href=${`/u/${o.handle}`} key=${o.id} class="marker"
                   onMouseEnter=${() => setTT({ op: o, x: p.x + 18, y: p.y - 8 })} onMouseLeave=${() => setTT(null)}
                   onClick=${(e) => { e.preventDefault(); navigate(`/u/${o.handle}`); }}
                   style=${`left:${p.x - r}px;top:${p.y - r}px;width:${r*2}px;height:${r*2}px;pointer-events:auto`}>
               <span class="pulse" style=${`background:radial-gradient(circle, ${color}55 0%, transparent 65%);animation:pulse ${o.rank === "COMMANDER" || o.rank === "SOVEREIGN" ? "1.6s" : "2.4s"} infinite`}></span>
-              <span class="core" style=${`width:${Math.max(6, r*0.55)}px;height:${Math.max(6, r*0.55)}px;background:${color};box-shadow:0 0 ${r}px ${color}, 0 0 ${r*0.4}px ${color}`}></span>
               <span class="ring" style=${`border-color:${color}aa`}></span>
+              <span class="glyph" style=${`position:absolute;left:50%;top:50%;width:${glyphSize}px;height:${glyphSize}px;transform:translate(-50%,-50%);color:${color}`}>
+                <${RankGlyph} rank=${o.rank} />
+              </span>
               <span class="label" style=${`color:${color}`}>@${o.handle}</span>
             </a>`;
           })}
