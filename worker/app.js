@@ -139,6 +139,47 @@ async function insertOperator(row, signal) {
 async function insertDeployment(row, signal) {
   return supaRest({ method: "POST", path: "deployments?select=id", body: row, signal });
 }
+
+// ====================================================================
+// FEDERATION HOOKS — fire-and-forget broadcasts to NROS via /api/nros/broadcast.
+// Worker holds the API key; SPA never sees it. No-op when NROS_API_KEY isn't set.
+// ====================================================================
+function broadcastNros(payload) {
+  if (!payload) return;
+  // Detached promise — never blocks the UI, swallows all errors.
+  fetch("/api/nros/broadcast", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+    keepalive: true,
+  }).catch(() => {});
+}
+const TX = {
+  onboarding: (op) => ({
+    kind: "OPERATOR_JOINED", realm_slug: "operator-grid",
+    title: `${op.display_name} enlisted as @${op.handle}`,
+    operator_callsign: op.handle,
+    metadata: { city: op.city || null, state: op.state || null, lat: op.lat || null, lng: op.lng || null },
+  }),
+  deployment: (op, d) => ({
+    kind: "MISSION_COMPLETED", realm_slug: "operator-grid",
+    title: `${(d.kind || "deploy").toUpperCase()} · ${d.title}`,
+    operator_callsign: op.handle,
+    metadata: { deployment_id: d.id, kind: d.kind, xp_awarded: d.xp_awarded, url: d.url || null, signal_score_after: op.signal_score, momentum_after: op.momentum, streak_days: op.streak_days },
+  }),
+  rankUp: (op, fromRank, toRank) => ({
+    kind: "RANK_CHANGED", realm_slug: "operator-grid",
+    title: `${op.display_name || op.handle} ascended to ${toRank}`,
+    operator_callsign: op.handle,
+    metadata: { from_rank: fromRank, to_rank: toRank, at_xp: op.xp },
+  }),
+  guildForged: (op, g) => ({
+    kind: "CUSTOM", realm_slug: "operator-grid",
+    title: `${op.display_name || op.handle} forged guild ${g.sigil || "◈"} ${g.name}`,
+    operator_callsign: op.handle,
+    metadata: { event: "GUILD_FORGED", guild_id: g.id, guild_slug: g.slug, sigil: g.sigil, color: g.color },
+  }),
+};
 async function insertGuild(row, signal) {
   return supaRest({ method: "POST", path: "guilds", body: row, signal });
 }
@@ -510,12 +551,25 @@ function Login() {
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const [cooldown, setCooldown] = useState(0);
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown(c => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
   async function submit(e) {
-    e.preventDefault(); setErr(null); setBusy(true);
+    e.preventDefault();
+    if (busy || cooldown > 0) return;
+    setErr(null); setBusy(true);
     if (!supaConfigured) { setErr("Supabase not configured yet."); setBusy(false); return; }
-    const { error } = await supa.auth.signInWithOtp({ email: email.trim().toLowerCase(), options: { emailRedirectTo: SITE + "/auth/callback" } });
-    setBusy(false);
-    if (error) setErr(error.message); else setSent(true);
+    try {
+      const { error } = await supa.auth.signInWithOtp({ email: email.trim().toLowerCase(), options: { emailRedirectTo: SITE + "/auth/callback" } });
+      if (error) throw error;
+      setSent(true);
+      setCooldown(45);
+    } catch (e) {
+      setErr(e?.message || String(e));
+    } finally { setBusy(false); }
   }
   return html`
     <${Nav} />
@@ -527,9 +581,12 @@ function Login() {
         <div class="panel-head"><span class="lbl">// AUTH · MAGIC LINK</span></div>
         <form onSubmit=${submit} style="padding:20px">
           ${err ? html`<div style="margin-bottom:14px;padding:8px 12px;border:1px solid rgba(248,113,113,.4);background:rgba(248,113,113,.05);font-family:var(--mono);font-size:11px;color:var(--danger)">${err.toUpperCase()}</div>` : null}
-          ${sent ? html`<div style="margin-bottom:14px;padding:8px 12px;border:1px solid rgba(103,232,249,.4);background:var(--glowsoft);font-family:var(--mono);font-size:11px;color:var(--glow)">TRANSMISSION SENT. CHECK YOUR INBOX.</div>` : null}
+          ${sent ? html`<div style="margin-bottom:14px;padding:8px 12px;border:1px solid rgba(103,232,249,.4);background:var(--glowsoft);font-family:var(--mono);font-size:11px;color:var(--glow);display:flex;justify-content:space-between;align-items:center">
+            <span>TRANSMISSION SENT · CHECK YOUR INBOX</span>
+            ${cooldown > 0 ? html`<span style="color:var(--mute)">RESEND IN ${cooldown}s</span>` : html`<button class="btn" style="padding:2px 8px;font-size:9px" onClick=${submit}>RESEND</button>`}
+          </div>` : null}
           <label class="field"><span class="lbl">Operator Email</span><input class="input" type="email" required autoFocus value=${email} onInput=${(e) => setEmail(e.target.value)} placeholder="callsign@signal.net"/></label>
-          <button class="btn btn-primary btn-block" disabled=${busy} type="submit">${busy ? "TRANSMITTING…" : "SEND SIGN-IN LINK"}</button>
+          <button class="btn btn-primary btn-block" disabled=${busy || cooldown > 0} type="submit">${busy ? "TRANSMITTING…" : cooldown > 0 ? `WAIT ${cooldown}s` : "SEND SIGN-IN LINK"}</button>
         </form>
       </${Panel}>
       <${Link} href="/" style="display:block;margin-top:16px;font-family:var(--mono);font-size:10px;color:var(--mute);letter-spacing:3px">← BACK TO BASE</${Link}>
@@ -571,7 +628,9 @@ function Onboarding() {
       let res;
       try { res = await insertOperator(row, ac.signal); } finally { clearTimeout(timer); }
       if (!res.ok) throw new Error(res.error || "Insert failed.");
-      auth.set({ operator: res.data || { ...row, rank: "INITIATE", xp: 0, momentum: 0, signal_score: 0, streak_days: 0, followers: 0, active_users: 0, created_at: new Date().toISOString() } });
+      const finalOp = res.data || { ...row, rank: "INITIATE", xp: 0, momentum: 0, signal_score: 0, streak_days: 0, followers: 0, active_users: 0, created_at: new Date().toISOString() };
+      auth.set({ operator: finalOp });
+      broadcastNros(TX.onboarding(finalOp));
       loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); });
       navigate("/command");
     } catch (e) {
@@ -659,7 +718,7 @@ function Command() {
         </div>
         <div style="display:flex;align-items:center;gap:14px">
           <${Link} href=${`/u/${op.handle}`} style="font-family:var(--mono);font-size:10px;letter-spacing:2px;color:var(--dim)">VIEW PUBLIC DOSSIER ↗</${Link}>
-          <button class="btn" onClick=${async () => { await supa.auth.signOut(); navigate("/"); }}>SIGN OUT</button>
+          <button class="btn" aria-label="Sign out" onClick=${async () => { await supa.auth.signOut(); navigate("/"); }}>SIGN OUT</button>
         </div>
       </div>
       ${streakAtRisk ? html`<div style="margin-bottom:16px;border:1px solid rgba(252,211,77,.5);background:rgba(252,211,77,.06);padding:10px 16px;display:flex;align-items:center;gap:12px">
@@ -785,7 +844,16 @@ function Deploy() {
       if (!res.ok) throw new Error(res.error || "Deploy failed.");
       const id = res.data?.id;
       if (!id) throw new Error("Server didn't return deployment id");
-      loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); });
+      // Refresh operator stats + detect rank-up for federation broadcast.
+      const prevRank = a.operator?.rank;
+      loadOperator(a.user.id).then(fresh => {
+        if (!fresh) return;
+        auth.set({ operator: fresh });
+        broadcastNros(TX.deployment(fresh, { id, kind, title: title.trim(), url: url.trim() || null, xp_awarded: XP[kind] || 0 }));
+        if (prevRank && fresh.rank && prevRank !== fresh.rank) {
+          broadcastNros(TX.rankUp(fresh, prevRank, fresh.rank));
+        }
+      });
       navigate(`/u/${a.operator.handle}/d/${id}`);
     } catch (e) {
       console.error("[NRO:deploy] failed:", e);
@@ -1072,7 +1140,7 @@ function Projects() {
               ${p.tagline ? html`<p style="color:var(--dim);margin:6px 0 0;font-size:13px">${p.tagline}</p>` : null}
               ${p.stack?.length ? html`<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:4px">${p.stack.map(s => html`<span style="border:1px solid var(--line2);padding:2px 8px;font-family:var(--mono);font-size:9px;color:var(--dim)">${s}</span>`)}</div>` : null}
             </div>
-            <button onClick=${() => del(p.id, p.name)} style="background:none;border:none;cursor:pointer;color:var(--mute);font-size:18px" title="Delete">✕</button>
+            <button onClick=${() => del(p.id, p.name)} aria-label=${`Delete project ${p.name}`} style="background:none;border:none;cursor:pointer;color:var(--mute);font-size:18px;padding:4px 8px;line-height:1" title=${`Delete ${p.name}`}>✕</button>
           </div>`)}
           ${projects.length === 0 && !showForm ? html`<div style="border:1px solid var(--line2);background:rgba(0,0,0,.3);padding:32px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--mute)">NO PROJECTS YET.</div>` : null}
           ${!showForm ? html`<button class="btn btn-glow" onClick=${() => setShowForm(true)} style="margin-top:10px">+ NEW PROJECT</button>`
@@ -1149,7 +1217,7 @@ function Dossier({ handle, deploymentId }) {
             </div>
             ${op.bio ? html`<p style="margin-top:16px;color:var(--dim);font-size:14px;line-height:1.6;max-width:60ch">${op.bio}</p>` : null}
             <div style="margin-top:14px;display:flex;flex-wrap:wrap;gap:6px">
-              ${SOCIALS.filter(s => op[s.key]).map(s => html`<a key=${s.key} href=${s.toUrl(op[s.key])} target="_blank" rel="noopener noreferrer" title=${s.label}
+              ${SOCIALS.filter(s => op[s.key]).map(s => html`<a key=${s.key} href=${s.toUrl(op[s.key])} target="_blank" rel="noopener noreferrer" title=${s.label} aria-label=${`${s.label} · ${s.toLabel(op[s.key])}`}
                 style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line2);background:rgba(17,17,20,.6);color:var(--dim);padding:5px 10px;font-family:var(--mono);font-size:11px;transition:.15s;text-decoration:none"
                 onMouseEnter=${(e) => { e.currentTarget.style.borderColor = 'var(--glow)'; e.currentTarget.style.color = 'var(--glow)'; }}
                 onMouseLeave=${(e) => { e.currentTarget.style.borderColor = 'var(--line2)'; e.currentTarget.style.color = 'var(--dim)'; }}>
@@ -1272,7 +1340,7 @@ function DeploymentDetail({ op, d }) {
           <div style="border:1px solid var(--line2);background:rgba(0,0,0,.4);padding:12px;font-family:var(--mono);font-size:12px;color:var(--dim);white-space:pre-wrap">${broadcast}</div>
           <div style="margin-top:10px;display:flex;gap:8px">
             <button class="btn" onClick=${() => { navigator.clipboard.writeText(broadcast); setCopied(true); setTimeout(() => setCopied(false), 1800); }}>${copied ? "COPIED" : "COPY POST"}</button>
-            <a class="btn btn-glow" href=${`https://x.com/intent/tweet?text=${encodeURIComponent(broadcast)}`} target="_blank">POST TO X</a>
+            <a class="btn btn-glow" href=${`https://x.com/intent/tweet?text=${encodeURIComponent(broadcast)}`} target="_blank" rel="noopener noreferrer">POST TO X</a>
           </div>
         </div>
       </div>
@@ -1544,6 +1612,12 @@ function SignalMap() {
           <div><span class="tag" style="color:#fbbf24">// SIGNAL MAP · OFFLINE</span>
           <h2 style="font-family:var(--display);font-size:28px;margin:14px 0 8px">Mapbox token missing.</h2>
           <p style="color:var(--dim);max-width:40ch">Add <code style="color:var(--glow);font-family:var(--mono)">NEXT_PUBLIC_MAPBOX_TOKEN</code> to bring the tactical map online.</p></div>
+        </div>` : null}
+        ${mapboxConfigured && opList.length === 0 ? html`<div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;text-align:center;border:1px solid rgba(103,232,249,.4);background:rgba(10,10,10,.85);padding:28px 36px;backdrop-filter:blur(8px);box-shadow:0 0 64px -12px rgba(103,232,249,.5)">
+          <span class="tag">// EMPTY SECTOR</span>
+          <h2 style="font-family:var(--display);font-size:28px;margin:12px 0 6px">The Grid awaits.</h2>
+          <p style="color:var(--dim);max-width:36ch;font-size:13px;margin:0 0 14px">No operators have enlisted yet. Be the first callsign on the network.</p>
+          <${Link} href="/login" class="btn btn-glow">ENLIST · BE #01</${Link}>
         </div>` : null}
         <!-- markers overlay -->
         ${ready && mapRef.current ? html`<div style="position:absolute;inset:0;pointer-events:none;z-index:3">
@@ -1877,9 +1951,10 @@ function CommandGuild() {
           : await insertGuild(payload, ac.signal);
       } finally { clearTimeout(timer); }
       if (!res.ok) throw new Error(res.error || "Operation failed.");
-      // For new guild: auto-join founder as member
+      // For new guild: auto-join founder as member + broadcast forge event.
       if (!isFounder && res.data?.id) {
         await joinGuild(res.data.id, a.user.id, "founder", null);
+        broadcastNros(TX.guildForged(a.operator, res.data));
       }
       loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); });
       navigate(`/guild/${sl}`);
@@ -2052,8 +2127,12 @@ function App() {
     </main>`;
 }
 
-// remove boot loader before mounting
-const _boot = document.getElementById("boot"); if (_boot) _boot.remove();
+// fade + remove boot loader so the transition feels intentional
+const _boot = document.getElementById("boot");
+if (_boot) {
+  _boot.style.opacity = "0";
+  setTimeout(() => _boot.remove(), 380);
+}
 
 // Wrap the root to render the Command Palette overlay on every route.
 function Root() {
