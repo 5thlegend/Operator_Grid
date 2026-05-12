@@ -210,7 +210,7 @@ function text(body, status = 200) {
   return new Response(body, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
 }
 
-const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="#0a0a0a"/><rect x="6" y="6" width="52" height="52" fill="none" stroke="#67e8f9" stroke-width="2"/><text x="50%" y="58%" text-anchor="middle" fill="#67e8f9" font-family="monospace" font-size="22" font-weight="700">NRO</text></svg>`;
+const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="#0a0a0a"/><g stroke="#67e8f9" stroke-width="1.5" fill="none" opacity="0.8"><path d="M8 8 L18 8 M8 8 L8 18"/><path d="M56 8 L46 8 M56 8 L56 18"/><path d="M8 56 L18 56 M8 56 L8 46"/><path d="M56 56 L46 56 M56 56 L56 46"/></g><circle cx="32" cy="32" r="10" fill="none" stroke="#67e8f9" stroke-width="1.5" opacity="0.4"/><circle cx="32" cy="32" r="4" fill="#67e8f9"/><text x="50%" y="84%" text-anchor="middle" fill="#67e8f9" font-family="monospace" font-size="9" font-weight="700" letter-spacing="2">NRO</text></svg>`;
 
 async function ogOperator(handle, env) {
   if (!env.NEXT_PUBLIC_SUPABASE_URL) return ogStub("NRO · OPERATOR DOSSIER");

@@ -339,7 +339,14 @@ function Landing() {
 }
 
 function Footer() {
-  return html`<footer class="footer"><div class="inner"><div>NEXT REALM INTERACTIVE · OPERATOR CORE v0.1</div><${Link} href="/grid" style="color:var(--dim)">ENTER THE GRID →</${Link}></div></footer>`;
+  return html`<footer class="footer"><div class="inner">
+    <div>NEXT REALM INTERACTIVE · OPERATOR CORE v0.1</div>
+    <div style="display:flex;gap:14px">
+      <${Link} href="/privacy" style="color:var(--mute)">PRIVACY</${Link}>
+      <${Link} href="/terms" style="color:var(--mute)">TERMS</${Link}>
+      <${Link} href="/grid" style="color:var(--dim)">ENTER THE GRID →</${Link}>
+    </div>
+  </div></footer>`;
 }
 
 // ====================================================================
@@ -1183,6 +1190,69 @@ function SignalMap() {
 }
 
 // ====================================================================
+// PRIVACY / TERMS
+// ====================================================================
+function Privacy() {
+  return html`<${Nav} />
+    <main class="container" style="max-width:760px;padding:48px 24px;color:var(--dim);font-size:14px;line-height:1.7">
+      <span class="tag">// PRIVACY POLICY</span>
+      <h1 style="font-family:var(--display);font-size:36px;color:var(--text);margin:8px 0 24px">Operator privacy.</h1>
+      <p>NRO collects the bare minimum required to run the operator network. We never sell your data.</p>
+      <h2 style="font-family:var(--display);font-size:18px;color:var(--text);margin-top:24px">What we store</h2>
+      <ul style="padding-left:20px">
+        <li><b>Email</b> — used only to send sign-in magic links via Supabase Auth.</li>
+        <li><b>Callsign + display name + tagline + bio</b> — publicly visible on your dossier.</li>
+        <li><b>City/state</b> (optional) — used to place your pin on the Signal Map. Stored as text + geocoded latitude/longitude.</li>
+        <li><b>Deployment log entries</b> — title, description, link, kind, timestamp. Public.</li>
+        <li><b>XP / momentum / signal score / streak</b> — derived metrics, public.</li>
+      </ul>
+      <h2 style="font-family:var(--display);font-size:18px;color:var(--text);margin-top:24px">What we don't</h2>
+      <ul style="padding-left:20px">
+        <li>No third-party analytics tracking your individual movements across the site.</li>
+        <li>No passwords (we use magic-link auth).</li>
+        <li>No payment data.</li>
+        <li>No precise GPS — only the city you typed.</li>
+      </ul>
+      <h2 style="font-family:var(--display);font-size:18px;color:var(--text);margin-top:24px">Third parties</h2>
+      <ul style="padding-left:20px">
+        <li><b>Cloudflare</b> hosts the Worker + handles edge logging (request metadata only).</li>
+        <li><b>Supabase</b> stores your dossier + auth.</li>
+        <li><b>Mapbox</b> serves the Signal Map tiles — they receive your IP when loading the map.</li>
+      </ul>
+      <h2 style="font-family:var(--display);font-size:18px;color:var(--text);margin-top:24px">Delete your dossier</h2>
+      <p>Email the network operator and we'll wipe your operator + all deployments + projects within 7 days. Public copies in cached previews may persist for a few weeks.</p>
+      <p style="margin-top:32px;font-family:var(--mono);font-size:11px;color:var(--mute)">Last updated: 2026-05-11</p>
+      <${Link} href="/" class="btn" style="margin-top:24px">← BACK TO BASE</${Link}>
+    </main>
+    <${Footer} />`;
+}
+
+function Terms() {
+  return html`<${Nav} />
+    <main class="container" style="max-width:760px;padding:48px 24px;color:var(--dim);font-size:14px;line-height:1.7">
+      <span class="tag">// TERMS OF SERVICE</span>
+      <h1 style="font-family:var(--display);font-size:36px;color:var(--text);margin:8px 0 24px">Operator code.</h1>
+      <p>By enlisting, you agree to the following short list.</p>
+      <h2 style="font-family:var(--display);font-size:18px;color:var(--text);margin-top:24px">The code</h2>
+      <ol style="padding-left:20px">
+        <li>Your deployments are real. Don't log fake work to game XP.</li>
+        <li>One operator per person. Multi-accounting gets you stripped of rank.</li>
+        <li>No harassment, no targeted attacks, no slurs. Tactical voice only.</li>
+        <li>Don't impersonate other operators. Callsigns are immutable for a reason.</li>
+        <li>Your dossier content (title, bio, projects, deployments) is yours; the network can show it publicly.</li>
+        <li>If you break the code, your dossier can be deactivated without warning.</li>
+      </ol>
+      <h2 style="font-family:var(--display);font-size:18px;color:var(--text);margin-top:24px">Service availability</h2>
+      <p>NRO is provided as-is during v0.1. Outages, rank resets, and breaking changes may happen as the system evolves toward Next Realm OS.</p>
+      <h2 style="font-family:var(--display);font-size:18px;color:var(--text);margin-top:24px">Liability</h2>
+      <p>NRO is not responsible for any consequences (career, social, mental) of climbing the rank ladder too fast.</p>
+      <p style="margin-top:32px;font-family:var(--mono);font-size:11px;color:var(--mute)">Last updated: 2026-05-11</p>
+      <${Link} href="/" class="btn" style="margin-top:24px">← BACK TO BASE</${Link}>
+    </main>
+    <${Footer} />`;
+}
+
+// ====================================================================
 // ROOT
 // ====================================================================
 function App() {
@@ -1201,6 +1271,8 @@ function App() {
   if (path === "/command/deploy") return html`<${Deploy}/>`;
   if (path === "/command/profile") return html`<${Profile}/>`;
   if (path === "/command/projects") return html`<${Projects}/>`;
+  if (path === "/privacy") return html`<${Privacy}/>`;
+  if (path === "/terms") return html`<${Terms}/>`;
 
   // /u/[handle] and /u/[handle]/d/[id]
   const um = path.match(/^\/u\/([^/]+)(?:\/d\/([^/]+))?$/);
@@ -1214,5 +1286,20 @@ function App() {
       <${Link} href="/grid" class="btn btn-primary" style="margin-top:14px">ENTER THE GRID →</${Link}>
     </main>`;
 }
+
+// remove boot loader before mounting
+const _boot = document.getElementById("boot"); if (_boot) _boot.remove();
+
+// global error capture so render failures show something instead of black screen
+window.addEventListener("error", (e) => {
+  const app = document.getElementById("app");
+  if (!app || app.children.length > 0) return;
+  app.innerHTML = `<main style="max-width:600px;margin:120px auto;padding:24px;color:#9a9aa3;font-family:Inter,sans-serif;text-align:center">
+    <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#f87171;letter-spacing:4px">// SIGNAL LOST · RUNTIME FAULT</div>
+    <h1 style="font-family:'Space Grotesk',sans-serif;font-size:32px;margin:14px 0;color:#e6e6ea">Operator Core failed to boot.</h1>
+    <p>${e.message ? e.message.replace(/[<>]/g, "") : "Unknown error"}</p>
+    <p style="margin-top:24px"><button onclick="location.reload()" style="font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:3px;color:#67e8f9;background:rgba(103,232,249,.1);border:1px solid #67e8f9;padding:10px 24px;cursor:pointer">RETRY</button></p>
+  </main>`;
+});
 
 render(h(App, {}), document.getElementById("app"));

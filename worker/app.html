@@ -8,8 +8,13 @@
 <meta property="og:description" content="Builders don't post. Operators deploy."/>
 <meta property="og:type" content="website"/>
 <link rel="preconnect" href="https://api.mapbox.com"/>
+<link rel="preconnect" href="https://esm.sh" crossorigin/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link rel="modulepreload" href="https://esm.sh/preact@10.24.3"/>
+<link rel="modulepreload" href="https://esm.sh/preact@10.24.3/hooks"/>
+<link rel="modulepreload" href="https://esm.sh/htm@3.1.1"/>
+<link rel="modulepreload" href="https://esm.sh/@supabase/supabase-js@2.47.10"/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.9.4/mapbox-gl.css" rel="stylesheet"/>
 <style>
@@ -235,7 +240,25 @@ input,textarea,select { font:inherit; }
 <body>
 <div class="grid-overlay"></div>
 <div class="scan"></div>
-<div id="app"></div>
+<div id="app">
+  <noscript>
+    <div style="max-width:600px;margin:120px auto;padding:24px;color:#9a9aa3;font-family:Inter,sans-serif;text-align:center">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#67e8f9;letter-spacing:4px">// SIGNAL OFFLINE</div>
+      <h1 style="font-family:'Space Grotesk',sans-serif;font-size:36px;margin:16px 0;color:#e6e6ea">JavaScript required.</h1>
+      <p>NRO runs entirely client-side. Enable JavaScript to access the Operator Grid.</p>
+    </div>
+  </noscript>
+  <div id="boot" style="position:fixed;inset:0;display:grid;place-items:center;background:transparent;z-index:50">
+    <div style="text-align:center">
+      <div style="display:inline-flex;align-items:center;gap:10px;font-family:'JetBrains Mono',monospace;font-size:11px;color:#67e8f9;letter-spacing:4px">
+        <span style="width:8px;height:8px;border-radius:50%;background:#67e8f9;animation:pulse 1.6s infinite"></span>
+        // INITIALIZING OPERATOR CORE
+      </div>
+      <div style="margin-top:12px;font-family:'Space Grotesk',sans-serif;font-size:24px;color:#5a5a64">Standby…</div>
+    </div>
+    <style>@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.7)} }</style>
+  </div>
+</div>
 
 <script>
 window.__NRO_ENV = {
