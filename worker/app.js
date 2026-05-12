@@ -1255,6 +1255,101 @@ function SignalMap() {
 }
 
 // ====================================================================
+// COMMAND PALETTE (Cmd+K / Ctrl+K)
+// ====================================================================
+const STATIC_TARGETS = [
+  { kind: "route", title: "Landing", sub: "/", icon: "△", href: "/" },
+  { kind: "route", title: "The Grid", sub: "Signal Map · /grid", icon: "◎", href: "/grid" },
+  { kind: "route", title: "Grid List", sub: "Rankings + Feed · /grid/list", icon: "▤", href: "/grid/list" },
+  { kind: "route", title: "Command Deck", sub: "/command", icon: "▣", href: "/command", auth: true },
+  { kind: "route", title: "Log Deployment", sub: "/command/deploy", icon: "↑", href: "/command/deploy", auth: true },
+  { kind: "route", title: "Projects", sub: "/command/projects", icon: "□", href: "/command/projects", auth: true },
+  { kind: "route", title: "Edit Dossier", sub: "/command/profile", icon: "◷", href: "/command/profile", auth: true },
+  { kind: "route", title: "Privacy", sub: "/privacy", icon: "⊙", href: "/privacy" },
+  { kind: "route", title: "Terms", sub: "/terms", icon: "⊙", href: "/terms" },
+];
+
+function CommandPalette({ open, onClose }) {
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState([]);
+  const [active, setActive] = useState(0);
+  const a = useAuth();
+  const inputRef = useRef(null);
+  useEffect(() => { if (open && inputRef.current) inputRef.current.focus(); }, [open]);
+
+  // Search operators when there's a query
+  useEffect(() => {
+    if (!open || !q.trim() || !supaConfigured) { setResults([]); return; }
+    let ignore = false;
+    const search = q.trim().toLowerCase();
+    supa.from("operators")
+      .select("handle,display_name,avatar_url,rank,signal_score,city,state")
+      .or(`handle.ilike.%${search}%,display_name.ilike.%${search}%`)
+      .order("signal_score", { ascending: false })
+      .limit(8)
+      .then(({ data }) => { if (!ignore) setResults(data || []); });
+    return () => { ignore = true; };
+  }, [q, open]);
+
+  // routes filtered by query
+  const filtered = q.trim()
+    ? STATIC_TARGETS.filter(t => (!t.auth || a.user) && (t.title.toLowerCase().includes(q.toLowerCase()) || t.sub.toLowerCase().includes(q.toLowerCase())))
+    : STATIC_TARGETS.filter(t => !t.auth || a.user);
+
+  const ops = (results || []).map(o => ({ kind: "operator", op: o, href: `/u/${o.handle}` }));
+  const all = [...ops, ...filtered];
+  const max = all.length;
+
+  const go = useCallback((item) => {
+    if (!item) return;
+    onClose();
+    setTimeout(() => navigate(item.href), 10);
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); onClose(); }
+      else if (e.key === "ArrowDown") { e.preventDefault(); setActive(i => Math.min(max - 1, i + 1)); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); setActive(i => Math.max(0, i - 1)); }
+      else if (e.key === "Enter") { e.preventDefault(); go(all[active]); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, active, max, all, go, onClose]);
+
+  // reset active when results change
+  useEffect(() => { setActive(0); }, [q, results.length]);
+
+  if (!open) return null;
+
+  return html`<div class="cmdk-overlay" onClick=${(e) => { if (e.target.classList.contains("cmdk-overlay")) onClose(); }}>
+    <div class="cmdk">
+      <div class="cmdk-head">
+        <span class="label">// COMMAND</span>
+        <span class="hint">↑↓ TO NAVIGATE · ↵ TO JUMP · ESC TO CLOSE</span>
+      </div>
+      <input ref=${inputRef} class="cmdk-input" value=${q} onInput=${e => setQ(e.target.value)} placeholder="search operators or jump to route…"/>
+      <div class="cmdk-results">
+        ${ops.length > 0 ? html`<div class="cmdk-section-label">// OPERATORS</div>` : null}
+        ${ops.map((it, i) => html`<button key=${`op-${it.op.handle}`} class=${`cmdk-item ${active === i ? 'active' : ''}`} onMouseEnter=${() => setActive(i)} onClick=${() => go(it)}>
+          <${Avatar} op=${it.op} size=${28} />
+          <div><div class="title">${it.op.display_name}</div><div class="sub">@${it.op.handle}${it.op.city ? ` · ${it.op.city}${it.op.state ? ", " + it.op.state : ""}` : ""}</div></div>
+          <div class="right">${Number(it.op.signal_score || 0).toFixed(1)} · ${it.op.rank}</div>
+        </button>`)}
+        ${filtered.length > 0 ? html`<div class="cmdk-section-label">// JUMP TO</div>` : null}
+        ${filtered.map((it, i) => { const idx = ops.length + i; return html`<button key=${`rt-${it.href}`} class=${`cmdk-item ${active === idx ? 'active' : ''}`} onMouseEnter=${() => setActive(idx)} onClick=${() => go(it)}>
+          <span class="glyph">${it.icon}</span>
+          <div><div class="title">${it.title}</div><div class="sub">${it.sub}</div></div>
+          <div class="right">↵</div>
+        </button>`; })}
+        ${max === 0 ? html`<div class="cmdk-empty">// NO MATCHES</div>` : null}
+      </div>
+    </div>
+  </div>`;
+}
+
+// ====================================================================
 // PRIVACY / TERMS
 // ====================================================================
 function Privacy() {
@@ -1339,6 +1434,9 @@ function App() {
   if (path === "/privacy") return html`<${Privacy}/>`;
   if (path === "/terms") return html`<${Terms}/>`;
 
+  // ROOT — gets wrapped with command palette regardless of route
+  /* see below */
+
   // /u/[handle] and /u/[handle]/d/[id]
   const um = path.match(/^\/u\/([^/]+)(?:\/d\/([^/]+))?$/);
   if (um) return html`<${Dossier} handle=${um[1]} deploymentId=${um[2]}/>`;
@@ -1355,6 +1453,21 @@ function App() {
 // remove boot loader before mounting
 const _boot = document.getElementById("boot"); if (_boot) _boot.remove();
 
+// Wrap the root to render the Command Palette overlay on every route.
+function Root() {
+  const [palette, setPalette] = useState(false);
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault(); setPalette(p => !p);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  return html`<${App}/><${CommandPalette} open=${palette} onClose=${() => setPalette(false)} />`;
+}
+
 // global error capture so render failures show something instead of black screen
 window.addEventListener("error", (e) => {
   const app = document.getElementById("app");
@@ -1367,4 +1480,4 @@ window.addEventListener("error", (e) => {
   </main>`;
 });
 
-render(h(App, {}), document.getElementById("app"));
+render(h(Root, {}), document.getElementById("app"));
