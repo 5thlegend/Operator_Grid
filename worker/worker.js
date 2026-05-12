@@ -27,6 +27,11 @@ export default {
       return ogDeployment(id, env);
     }
 
+    // AI Operator Coach — Cloudflare Workers AI (free tier, no new key).
+    if (path === "/api/ai/coach" && request.method === "POST") {
+      return aiCoach(request, env);
+    }
+
     // app bundle
     if (path === "/app.js") {
       return new Response(RAW_JS, {
@@ -183,6 +188,80 @@ function svgImage(body) {
     headers: {
       "content-type": "image/svg+xml; charset=utf-8",
       "cache-control": "public, max-age=300, s-maxage=300",
+    },
+  });
+}
+
+// ====================================================================
+// AI Operator Coach (free, runs on Cloudflare Workers AI)
+// ====================================================================
+async function aiCoach(request, env) {
+  if (!env.AI) {
+    return jsonResponse({ error: "Workers AI binding not configured" }, 503);
+  }
+  let body = {};
+  try { body = await request.json(); } catch {}
+  const op = body.operator || {};
+  if (!op.handle) return jsonResponse({ error: "operator required" }, 400);
+
+  // Construct context — keeps token cost minimal, hides any data the client
+  // shouldn't have already known. Anti-hallucination via tight system prompt.
+  const ctx = {
+    handle: String(op.handle).slice(0, 32),
+    display_name: String(op.display_name || op.handle).slice(0, 48),
+    rank: String(op.rank || "INITIATE"),
+    xp: Number(op.xp || 0),
+    momentum: Number(op.momentum || 0),
+    signal_score: Number(op.signal_score || 0),
+    streak_days: Number(op.streak_days || 0),
+    deployments_30d: Number(op.deployments_30d || 0),
+    days_since_last: Number(op.days_since_last ?? 999),
+    last_kind: String(op.last_kind || "—").slice(0, 16),
+    current_project: String(op.current_project || "—").slice(0, 64),
+  };
+
+  const system = `You are NRO's tactical AI advisor — a cinematic mythic-tech operator coach. You speak in short, punchy military-ops prose. No corporate fluff, no "great job!", no exclamation points unless something is genuinely critical. Use callsign-style references. Recommendations are concrete actions, not vibes. Output exactly two lines:
+
+LINE 1: A one-sentence tactical read of the operator's state (≤16 words).
+LINE 2: One concrete action to take today (≤22 words).
+
+No headers, no bullet points, no markdown, no emoji. Two lines, period.`;
+
+  const user = `Operator state:
+- callsign: @${ctx.handle} (${ctx.display_name})
+- rank: ${ctx.rank} · XP: ${ctx.xp} · signal score: ${ctx.signal_score.toFixed(1)}/10
+- momentum (14d XP): ${ctx.momentum}
+- current streak: ${ctx.streak_days} days
+- days since last deployment: ${ctx.days_since_last === 999 ? "never deployed" : ctx.days_since_last}
+- last deployment kind: ${ctx.last_kind}
+- deployments in last 30 days: ${ctx.deployments_30d}
+- active project: ${ctx.current_project}
+
+Give a tactical read + today's action.`;
+
+  try {
+    const res = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      max_tokens: 200,
+      temperature: 0.7,
+    });
+    const text = (res?.response || "").trim();
+    return jsonResponse({ text, operator: ctx.handle, generated_at: new Date().toISOString() });
+  } catch (e) {
+    return jsonResponse({ error: String(e?.message || e) }, 500);
+  }
+}
+
+function jsonResponse(obj, status = 200) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+      ...SECURITY_HEADERS,
     },
   });
 }

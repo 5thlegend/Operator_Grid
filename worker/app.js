@@ -470,6 +470,12 @@ function Command() {
   }, [a.user?.id]);
   if (!a.operator) return html`<${Nav} /><main class="container center"><span class="tag">// LOADING DECK…</span></main>`;
   const op = a.operator;
+  // streak risk: last deployment was yesterday or earlier today still counts; older = streak about to die
+  const lastTs = op.last_deployment_at ? new Date(op.last_deployment_at).getTime() : null;
+  const hoursSince = lastTs ? Math.floor((Date.now() - lastTs) / 3_600_000) : 999;
+  const streakAtRisk = op.streak_days > 0 && hoursSince > 24 && hoursSince < 48;
+  const streakBroken = op.streak_days === 0 && (lastTs ? hoursSince > 24 : false);
+  const daysSinceLast = lastTs ? Math.floor(hoursSince / 24) : 999;
   return html`
     <${Nav} variant="command" />
     <main class="container" style="padding:40px 24px;max-width:1024px">
@@ -483,6 +489,11 @@ function Command() {
           <button class="btn" onClick=${async () => { await supa.auth.signOut(); navigate("/"); }}>SIGN OUT</button>
         </div>
       </div>
+      ${streakAtRisk ? html`<div style="margin-bottom:16px;border:1px solid rgba(252,211,77,.5);background:rgba(252,211,77,.06);padding:10px 16px;display:flex;align-items:center;gap:12px">
+        <span style="font-family:var(--mono);font-size:11px;color:#fbbf24;letter-spacing:2px">⚠ STREAK AT RISK</span>
+        <span style="font-size:13px;color:var(--text)">Your ${op.streak_days}-day streak ends in ${48 - hoursSince}h. Log an iteration today to keep it.</span>
+        <${Link} href="/command/deploy" class="btn btn-glow" style="margin-left:auto">DEPLOY NOW</${Link}>
+      </div>` : null}
       <${Panel} corners=${true} glow=${true}>
         <div class="panel-head"><span class="lbl">// OPERATOR STATUS</span></div>
         <div style="display:grid;grid-template-columns:auto 1fr;gap:24px;padding:24px;align-items:start">
@@ -499,6 +510,8 @@ function Command() {
           </div>
         </div>
       </${Panel}>
+
+      <${AICoach} op=${op} deps=${deps} daysSinceLast=${daysSinceLast} />
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:24px">
         <${ActionCard} href="/command/deploy" label="LOG DEPLOYMENT" hint="Stamp the record. Earn XP." accent=${true} />
         <${ActionCard} href="/command/projects" label="PROJECTS" hint=${`${projects.length} on file`} />
@@ -519,6 +532,50 @@ function Command() {
       </${Panel}>
     </main>`;
 }
+function AICoach({ op, deps, daysSinceLast }) {
+  const [text, setText] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  async function fetchAdvice() {
+    setBusy(true); setErr(null); setText(null);
+    const last = deps?.[0];
+    const deps30 = (deps || []).filter(d => Date.now() - new Date(d.created_at).getTime() < 30 * 86400000).length;
+    try {
+      const r = await fetch("/api/ai/coach", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operator: {
+          handle: op.handle, display_name: op.display_name, rank: op.rank,
+          xp: op.xp, momentum: op.momentum, signal_score: op.signal_score,
+          streak_days: op.streak_days, deployments_30d: deps30,
+          days_since_last: daysSinceLast, last_kind: last?.kind || "—",
+          current_project: op.current_project || "—",
+        }}),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      setText(data.text || "Signal received. Standby.");
+    } catch (e) {
+      setErr(String(e?.message || e).toUpperCase());
+    } finally { setBusy(false); }
+  }
+  // auto-fire once per mount so the deck always greets with intel
+  useEffect(() => { fetchAdvice(); }, []);
+  const lines = (text || "").split("\n").map(s => s.trim()).filter(Boolean);
+  return html`<${Panel} corners=${true} style="margin-top:24px">
+    <div class="panel-head"><span class="lbl">// TACTICAL ADVISOR · AI</span><button onClick=${fetchAdvice} disabled=${busy} class="btn" style="padding:4px 10px;font-size:10px">${busy ? "QUERYING…" : "RE-QUERY"}</button></div>
+    <div style="padding:20px;display:flex;gap:16px;align-items:flex-start">
+      <div style="flex-shrink:0;width:42px;height:42px;border:1px solid var(--glow);background:var(--glowsoft);display:grid;place-items:center;font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--glow)">AI</div>
+      <div style="flex:1;min-width:0">
+        ${busy && !text ? html`<div style="font-family:var(--mono);font-size:11px;color:var(--mute);letter-spacing:2px"><span class="dot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--glow);margin-right:8px;animation:pulse 1.6s infinite"></span>SCANNING TELEMETRY…</div>` : null}
+        ${err ? html`<div style="font-family:var(--mono);font-size:11px;color:var(--danger)">// ADVISOR OFFLINE: ${err}</div>` : null}
+        ${lines[0] ? html`<div style="font-family:var(--display);font-size:18px;line-height:1.4;color:var(--text)">${lines[0]}</div>` : null}
+        ${lines[1] ? html`<div style="margin-top:8px;font-size:14px;line-height:1.55;color:var(--dim)">${lines[1]}</div>` : null}
+        ${lines.length === 0 && !busy && !err ? html`<div style="color:var(--mute);font-size:13px">Press RE-QUERY for advisor briefing.</div>` : null}
+      </div>
+    </div>
+  </${Panel}>`;
+}
+
 function ActionCard({ href, label, hint, accent }) {
   return html`<${Link} href=${href} class=${`panel ${accent ? '' : ''}`} style=${`display:flex;align-items:center;justify-content:space-between;padding:18px;border:1px solid ${accent ? 'rgba(103,232,249,.6)' : 'var(--line)'};transition:.15s`}>
     <div>
@@ -959,7 +1016,14 @@ function SignalMap() {
         attributionControl: false,
         cooperativeGestures: true,
       });
-      map.on("load", () => { setReady(true); });
+      map.on("load", () => {
+        setReady(true);
+        // zoom to signed-in operator's location when state hydrates
+        const me = auth.operator;
+        if (me?.lat != null && me?.lng != null) {
+          setTimeout(() => map.flyTo({ center: [me.lng, me.lat], zoom: 6, duration: 1800, essential: true }), 600);
+        }
+      });
       mapRef.current = map;
     })();
     return () => { mapRef.current?.remove(); };
