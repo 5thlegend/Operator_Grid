@@ -1541,14 +1541,22 @@ function Dossier({ handle, deploymentId }) {
   const [notfound, setNF] = useState(false);
   useEffect(() => {
     setOp(null); setNF(false);
-    supa.from("operators").select("*, guild_members(role, guild:guilds(*)), recruited_by_op:operators!operators_recruited_by_fkey(handle, display_name, rank)").eq("handle", handle.toLowerCase()).maybeSingle().then(async ({ data }) => {
+    // Two-step fetch: PostgREST won't self-join via FK constraint name, so we
+    // resolve the recruiter in a second targeted query if present.
+    supa.from("operators").select("*, guild_members(role, guild:guilds(*))").eq("handle", handle.toLowerCase()).maybeSingle().then(async ({ data, error }) => {
+      if (error) { console.error("[NRO:dossier] fetch failed:", error.message); setNF(true); return; }
       if (!data) { setNF(true); return; }
       const m = (data.guild_members || [])[0];
       data.guild = m?.guild || null;
       data.guild_role = m?.role || null;
       delete data.guild_members;
-      // recruited_by_op is the recruiter — flatten array if PostgREST returned one
-      if (Array.isArray(data.recruited_by_op)) data.recruited_by_op = data.recruited_by_op[0] || null;
+      // Resolve recruiter if any (separate query — self-FK doesn't embed)
+      if (data.recruited_by) {
+        try {
+          const { data: r } = await supa.from("operators").select("handle, display_name, rank").eq("id", data.recruited_by).maybeSingle();
+          if (r) data.recruited_by_op = r;
+        } catch (e) { console.warn("[NRO:dossier] recruiter lookup failed:", e?.message); }
+      }
       setOp(data);
       const [d, p] = await Promise.all([
         supa.from("deployments").select("*").eq("operator_id", data.id).order("created_at", { ascending: false }),
