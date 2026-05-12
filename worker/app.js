@@ -1549,16 +1549,14 @@ function SignalMap() {
     });
   }, [opList]);
 
-  // Paint guild territory circles on the Mapbox map via a managed GeoJSON Source+Layer.
+  // Paint guild territory polygons + connection lines (supply-route web).
   useEffect(() => {
     const m = mapRef.current; if (!m || !ready) return;
-    // Build features as Polygon approximations of circles (32-sided).
+    // Build features as Polygon approximations of circles (64-sided).
     const features = guildClusters.map(c => {
       const points = [];
       const steps = 64;
-      // Earth radius in km
       const R = 6371;
-      // Approximate degrees per km at this latitude
       const latStep = (c.radiusKm / R) * (180 / Math.PI);
       const lngStep = (c.radiusKm / (R * Math.cos(c.lat * Math.PI / 180))) * (180 / Math.PI);
       for (let i = 0; i <= steps; i++) {
@@ -1571,22 +1569,51 @@ function SignalMap() {
         geometry: { type: "Polygon", coordinates: [points] },
       };
     });
-    const data = { type: "FeatureCollection", features };
+    const polyData = { type: "FeatureCollection", features };
+
+    // Connection lines: full mesh between same-guild members. Two-layer render
+    // (thin core + soft glow) so allied operators feel networked across territory.
+    const lineFeatures = [];
+    for (const c of guildClusters) {
+      const ms = c.members.filter(o => o.lat != null && o.lng != null);
+      for (let i = 0; i < ms.length; i++) {
+        for (let j = i + 1; j < ms.length; j++) {
+          lineFeatures.push({
+            type: "Feature",
+            properties: { color: c.guild.color, guild: c.guild.slug },
+            geometry: { type: "LineString", coordinates: [[ms[i].lng, ms[i].lat], [ms[j].lng, ms[j].lat]] },
+          });
+        }
+      }
+    }
+    const lineData = { type: "FeatureCollection", features: lineFeatures };
 
     const sid = "guild-territory";
-    const fillLayer = "guild-territory-fill";
-    const lineLayer = "guild-territory-line";
+    const sidLines = "guild-connections";
     if (m.getSource(sid)) {
-      m.getSource(sid).setData(data);
+      m.getSource(sid).setData(polyData);
     } else {
-      m.addSource(sid, { type: "geojson", data });
+      m.addSource(sid, { type: "geojson", data: polyData });
       m.addLayer({
-        id: fillLayer, source: sid, type: "fill",
-        paint: { "fill-color": ["get", "color"], "fill-opacity": 0.08 },
+        id: "guild-territory-fill", source: sid, type: "fill",
+        paint: { "fill-color": ["get", "color"], "fill-opacity": 0.07 },
       });
       m.addLayer({
-        id: lineLayer, source: sid, type: "line",
+        id: "guild-territory-line", source: sid, type: "line",
         paint: { "line-color": ["get", "color"], "line-opacity": 0.45, "line-width": 1.2, "line-dasharray": [3, 3] },
+      });
+    }
+    if (m.getSource(sidLines)) {
+      m.getSource(sidLines).setData(lineData);
+    } else {
+      m.addSource(sidLines, { type: "geojson", data: lineData });
+      m.addLayer({
+        id: "guild-connections-glow", source: sidLines, type: "line",
+        paint: { "line-color": ["get", "color"], "line-opacity": 0.13, "line-width": 5, "line-blur": 3 },
+      });
+      m.addLayer({
+        id: "guild-connections-line", source: sidLines, type: "line",
+        paint: { "line-color": ["get", "color"], "line-opacity": 0.40, "line-width": 1, "line-blur": 0.5 },
       });
     }
   }, [guildClusters, ready]);
@@ -1630,6 +1657,22 @@ function SignalMap() {
 
       <div class="mapwrap">
         <div id="map"></div>
+        ${guildClusters.length > 0 ? html`<div style="position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:6;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:96%;pointer-events:auto">
+          ${guildClusters.slice().sort((a,b) => b.members.reduce((s,m)=>s+(m.signal_score||0),0) - a.members.reduce((s,m)=>s+(m.signal_score||0),0)).map(c => {
+            const totalSignal = c.members.reduce((s,m) => s + (m.signal_score || 0), 0);
+            const totalMomentum = c.members.reduce((s,m) => s + (m.momentum || 0), 0);
+            return html`<${Link} key=${c.guild.id} href=${`/guild/${c.guild.slug}`} style=${`display:inline-flex;align-items:center;gap:8px;padding:5px 12px;border:1px solid ${c.guild.color}66;background:${c.guild.color}1a;backdrop-filter:blur(6px);font-family:var(--mono);font-size:10px;letter-spacing:2px;color:${c.guild.color};box-shadow:0 0 24px -8px ${c.guild.color}`}>
+              <span style="font-size:13px">${c.guild.sigil}</span>
+              <span style="text-transform:uppercase">${c.guild.name}</span>
+              <span style="color:var(--mute)">·</span>
+              <span>${c.members.length} OPS</span>
+              <span style="color:var(--mute)">·</span>
+              <span>S ${totalSignal.toFixed(1)}</span>
+              <span style="color:var(--mute)">·</span>
+              <span>M ${totalMomentum}</span>
+            </${Link}>`;
+          })}
+        </div>` : null}
         ${!mapboxConfigured ? html`<div style="position:absolute;inset:0;z-index:5;background:var(--bg);display:grid;place-items:center;text-align:center;padding:24px">
           <div><span class="tag" style="color:#fbbf24">// SIGNAL MAP · OFFLINE</span>
           <h2 style="font-family:var(--display);font-size:28px;margin:14px 0 8px">Mapbox token missing.</h2>
