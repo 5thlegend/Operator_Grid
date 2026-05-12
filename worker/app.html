@@ -182,6 +182,12 @@ input,textarea,select { font:inherit; }
 .map-app .mapwrap::after { content:""; position:absolute; inset:0; pointer-events:none;
   background: radial-gradient(ellipse 90% 80% at 50% 50%, transparent 60%, rgba(10,10,10,.85) 100%); z-index:2; }
 
+/* HUD doesn't want Mapbox chrome. NOTE: Mapbox TOS requires attribution on
+   non-Enterprise plans — hiding these is at the account holder's discretion. */
+.mapboxgl-ctrl-logo, .mapboxgl-ctrl-bottom-left, .mapboxgl-ctrl-bottom-right, .mapboxgl-ctrl-attrib { display: none !important; }
+.mapboxgl-ctrl-top-right { display: none !important; }
+.mapboxgl-canvas { outline: none; }
+
 .marker {
   position:absolute; pointer-events:auto; cursor:pointer;
   width:28px; height:28px;
