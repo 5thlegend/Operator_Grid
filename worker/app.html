@@ -300,6 +300,35 @@ fieldset[disabled] { opacity:0.65; }
 .faction-chip .fc-stats b { color: var(--g); font-weight:600; }
 .faction-chip .fc-sep { color: var(--mute); }
 
+/* SKELETON LOADERS — cinematic HUD placeholders */
+@keyframes nro-skel-pulse {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 0.85; }
+}
+.skel {
+  background: linear-gradient(90deg,
+    rgba(38,38,46,0.55) 0%,
+    rgba(52,52,62,0.85) 50%,
+    rgba(38,38,46,0.55) 100%);
+  background-size: 200% 100%;
+  animation: nro-skel-pulse 1.6s ease-in-out infinite;
+  border: 1px solid var(--line);
+}
+.skel-line { height: 12px; }
+.skel-bar  { height: 28px; }
+.skel-tile { aspect-ratio: 16/9; }
+.skel-row  { display:flex; gap:12px; align-items:center; padding:12px; border-bottom:1px solid var(--line); }
+.skel-stat { padding:16px; }
+.skel-stat .skel-line:first-child { width: 60%; height:10px; margin-bottom:8px; }
+.skel-stat .skel-line:last-child  { width: 80%; height:22px; }
+
+.dossier-skeleton {
+  display:grid; grid-template-columns:auto 1fr auto; gap:20px; padding:20px;
+  align-items:center;
+}
+.dossier-skeleton .ds-avatar { width:96px; height:96px; }
+.dossier-skeleton .ds-body { display:flex; flex-direction:column; gap:10px; }
+
 /* RANK GLYPH MARKERS */
 .glyph { width:100%; height:100%; display:grid; place-items:center; }
 .glyph svg { width:100%; height:100%; display:block; filter: drop-shadow(0 0 6px currentColor); }

@@ -519,6 +519,71 @@ function RankGlyph({ rank }) {
   }
 }
 
+// Cinematic skeleton placeholders — used while async data is in-flight.
+// Mirrors the layout each page will have once loaded so layout doesn't pop.
+function DossierSkeleton() {
+  return html`<${Nav}/>
+    <main class="container" style="padding:40px 24px;max-width:1024px">
+      <${Panel} corners=${true}>
+        <div class="panel-head"><span class="lbl">// LOADING DOSSIER</span><span class="hint">SCANNING TELEMETRY…</span></div>
+        <div class="dossier-skeleton">
+          <div class="skel skel-tile ds-avatar" style="aspect-ratio:1"></div>
+          <div class="ds-body">
+            <div class="skel skel-bar" style="width:55%"></div>
+            <div class="skel skel-line" style="width:35%"></div>
+            <div class="skel skel-line" style="width:80%"></div>
+          </div>
+          <div class="skel skel-bar" style="width:110px"></div>
+        </div>
+        <div class="stats-row" style="border-top:1px solid var(--line)">
+          ${[0,1,2,3,4].map(i => html`<div class="stat skel-stat" key=${i}><div class="skel skel-line"></div><div class="skel skel-line"></div></div>`)}
+        </div>
+      </${Panel}>
+    </main>`;
+}
+function CommandSkeleton() {
+  return html`<${Nav} variant="command"/>
+    <main class="container" style="padding:40px 24px;max-width:1024px">
+      <div style="margin-bottom:28px">
+        <div class="skel skel-line" style="width:160px;margin-bottom:8px"></div>
+        <div class="skel skel-bar" style="width:55%"></div>
+      </div>
+      <${Panel} corners=${true} glow=${true}>
+        <div class="panel-head"><span class="lbl">// LOADING DECK</span><span class="hint">SCANNING TELEMETRY…</span></div>
+        <div class="dossier-skeleton">
+          <div class="skel skel-tile ds-avatar" style="aspect-ratio:1;width:80px;height:80px"></div>
+          <div class="ds-body" style="gap:14px">
+            <div class="skel skel-bar" style="width:200px"></div>
+            <div class="skel skel-line" style="width:100%"></div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:6px">
+              ${[0,1,2,3].map(i => html`<div key=${i}><div class="skel skel-line" style="width:60%;margin-bottom:6px"></div><div class="skel skel-line" style="height:18px;width:80%"></div></div>`)}
+            </div>
+          </div>
+        </div>
+      </${Panel}>
+    </main>`;
+}
+function GuildSkeleton() {
+  return html`<${Nav}/>
+    <main class="container" style="padding:40px 24px;max-width:1024px">
+      <${Panel} corners=${true}>
+        <div class="panel-head"><span class="lbl">// LOADING GUILD</span><span class="hint">SCANNING FACTION…</span></div>
+        <div class="dossier-skeleton">
+          <div class="skel" style="width:96px;height:96px"></div>
+          <div class="ds-body">
+            <div class="skel skel-bar" style="width:240px"></div>
+            <div class="skel skel-line" style="width:120px"></div>
+            <div class="skel skel-line" style="width:80%"></div>
+          </div>
+          <div class="skel skel-bar" style="width:100px"></div>
+        </div>
+        <div class="stats-row" style="border-top:1px solid var(--line)">
+          ${[0,1,2,3].map(i => html`<div class="stat skel-stat" key=${i}><div class="skel skel-line"></div><div class="skel skel-line"></div></div>`)}
+        </div>
+      </${Panel}>
+    </main>`;
+}
+
 function GuildBadge({ guild, size = "md" }) {
   if (!guild) return null;
   const padding = size === "sm" ? "2px 8px" : "4px 12px";
@@ -917,7 +982,7 @@ function Command() {
     supa.from("deployments").select("*").eq("operator_id", a.user.id).order("created_at", { ascending: false }).limit(8).then(({ data }) => setDeps(data || []));
     supa.from("projects").select("*").eq("operator_id", a.user.id).order("created_at", { ascending: false }).then(({ data }) => setProjects(data || []));
   }, [a.user?.id]);
-  if (!a.operator) return html`<${Nav} /><main class="container center"><span class="tag">// LOADING DECK…</span></main>`;
+  if (!a.operator) return html`<${CommandSkeleton}/>`;
   const op = a.operator;
   // streak risk: last deployment was yesterday or earlier today still counts; older = streak about to die
   const lastTs = op.last_deployment_at ? new Date(op.last_deployment_at).getTime() : null;
@@ -1103,7 +1168,7 @@ function Deploy() {
       setBusy(false);
     }
   }
-  if (!a.operator) return html`<${Nav} /><main class="container center"><span class="tag">// LOADING…</span></main>`;
+  if (!a.operator) return html`<${CommandSkeleton}/>`;
   return html`
     <${Nav} variant="command" />
     <main class="container" style="max-width:720px;padding:40px 24px">
@@ -1255,7 +1320,7 @@ function Profile() {
     }
   }
 
-  if (!op) return html`<${Nav} /><main class="container center"><span class="tag">// LOADING…</span></main>`;
+  if (!op) return html`<${CommandSkeleton}/>`;
   return html`
     <${Nav} variant="command" />
     <main class="container" style="max-width:760px;padding:40px 24px">
@@ -1391,7 +1456,7 @@ function Projects() {
     const { error } = await supa.from("projects").delete().eq("id", id).eq("operator_id", a.user.id);
     if (!error) setProjects(p => p.filter(x => x.id !== id));
   }
-  if (!a.operator) return html`<${Nav} /><main class="container center"><span class="tag">// LOADING…</span></main>`;
+  if (!a.operator) return html`<${CommandSkeleton}/>`;
   return html`
     <${Nav} variant="command" />
     <main class="container" style="max-width:960px;padding:40px 24px">
@@ -1485,7 +1550,7 @@ function Dossier({ handle, deploymentId }) {
     });
   }, [handle]);
   if (notfound) return html`<${Nav} /><main class="container center"><span class="tag">// SIGNAL LOST · 404</span><h1 style="font-family:var(--display);font-size:42px;margin:14px 0">Out of range.</h1><p style="color:var(--dim)">No operator at that callsign.</p><${Link} href="/grid" class="btn btn-primary" style="margin-top:16px">ENTER THE GRID →</${Link}></main>`;
-  if (!op) return html`<${Nav} /><main class="container center"><span class="tag">// FETCHING DOSSIER…</span></main>`;
+  if (!op) return html`<${DossierSkeleton}/>`;
 
   if (deploymentId) {
     const d = deps.find(x => x.id === deploymentId);
@@ -2223,7 +2288,7 @@ function GuildDossier({ slug }) {
     });
   }, [slug]);
   if (notfound) return html`<${Nav}/><main class="container center"><span class="tag">// SIGNAL LOST · 404</span><h1 style="font-family:var(--display);font-size:42px;margin:14px 0">No such guild.</h1><${Link} href="/guilds" class="btn btn-primary" style="margin-top:16px">BACK TO REGISTRY →</${Link}></main>`;
-  if (!g) return html`<${Nav}/><main class="container center"><span class="tag">// LOADING GUILD…</span></main>`;
+  if (!g) return html`<${GuildSkeleton}/>`;
   const totalSignal = members.reduce((a, m) => a + Number(m.operator?.signal_score || 0), 0);
   const totalMomentum = members.reduce((a, m) => a + Number(m.operator?.momentum || 0), 0);
   const totalDeps = members.reduce((a, m) => a + 0, 0); // could fetch in second query
@@ -2334,7 +2399,7 @@ function CommandGuild() {
       setBusy(false);
     }
   }
-  if (!a.operator) return html`<${Nav}/><main class="container center"><span class="tag">// LOADING…</span></main>`;
+  if (!a.operator) return html`<${CommandSkeleton}/>`;
   const existing = a.operator.guild;
   const isFounder = existing && a.user.id === existing.founder_id;
   const isMember = existing && !isFounder;
