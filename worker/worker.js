@@ -32,6 +32,11 @@ export default {
       return aiCoach(request, env);
     }
 
+    // AI Deployment Assessment — per-deployment tactical critique.
+    if (path === "/api/ai/assess" && request.method === "POST") {
+      return aiAssess(request, env);
+    }
+
     // app bundle
     if (path === "/app.js") {
       return new Response(RAW_JS, {
@@ -389,7 +394,7 @@ Give a tactical read + today's action.`;
       max_tokens: 200,
       temperature: 0.7,
     });
-    const text = (res?.response || "").trim();
+    const text = scrubAiOutput(res?.response || "");
     return jsonResponse({ text, operator: ctx.handle, generated_at: new Date().toISOString() });
   } catch (e) {
     return jsonResponse({ error: String(e?.message || e) }, 500);
@@ -405,4 +410,78 @@ function jsonResponse(obj, status = 200) {
       ...SECURITY_HEADERS,
     },
   });
+}
+
+async function aiAssess(request, env) {
+  if (!env.AI) return jsonResponse({ error: "AI offline" }, 503);
+  let body = {};
+  try { body = await request.json(); } catch {}
+  const d = body.deployment || {};
+  if (!d.title) return jsonResponse({ error: "deployment required" }, 400);
+  const ctx = {
+    kind: String(d.kind || "iteration"),
+    title: String(d.title).slice(0, 200),
+    description: String(d.description || "").slice(0, 600),
+    url: String(d.url || "").slice(0, 200),
+    handle: String(d.handle || "").slice(0, 32),
+    rank: String(d.rank || "INITIATE"),
+    xp_awarded: Number(d.xp_awarded || 0),
+    days_into_streak: Number(d.streak_days || 0),
+  };
+
+  const system = `You are NRO's tactical assessor. You write exactly two lines, separated by a single newline. No labels, no prefixes, no markdown, no emoji, no bullets, no quotes. Just two raw sentences.
+
+Sentence 1: Sharp tactical read of what this deployment signals about the operator's trajectory. Maximum 18 words. Specific. No platitudes.
+Sentence 2: One concrete next move the operator should ship in 48 hours to compound this. Maximum 22 words.
+
+Forbidden: "great work", "well done", "nice job", "good", exclamation marks, words like "LINE 1", "TACTICAL", "NEXT MOVE" as labels. Voice: hardened ops commander. Direct. No softening.
+
+Output template (replace bracket content):
+[Sentence 1.]
+[Sentence 2.]`;
+
+  const user = `DEPLOYMENT RECORD:
+- callsign: @${ctx.handle}
+- rank: ${ctx.rank}
+- kind: ${ctx.kind.toUpperCase()} (+${ctx.xp_awarded} XP)
+- title: ${ctx.title}
+- description: ${ctx.description || "(none)"}
+- streak: ${ctx.days_into_streak} days
+${ctx.url ? `- link: ${ctx.url}` : ""}
+
+Assess.`;
+
+  try {
+    const res = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      max_tokens: 220,
+      temperature: 0.75,
+    });
+    const text = scrubAiOutput(res?.response || "");
+    return jsonResponse({ text, deployment_id: d.id, generated_at: new Date().toISOString() });
+  } catch (e) {
+    return jsonResponse({ error: String(e?.message || e) }, 500);
+  }
+}
+
+// Strip prefixes/labels the model occasionally leaks, plus surrounding quotes.
+function scrubAiOutput(raw) {
+  return raw
+    .split("\n")
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => line
+      .replace(/^[-*•]\s*/, "")
+      .replace(/^(LINE\s*\d+\s*[—\-:]+\s*)/i, "")
+      .replace(/^(TACTICAL\s*(READ|ASSESSMENT)\s*[—\-:]+\s*)/i, "")
+      .replace(/^(NEXT\s*MOVE\s*[—\-:]+\s*)/i, "")
+      .replace(/^(SENTENCE\s*\d+\s*[—\-:]+\s*)/i, "")
+      .replace(/^["'`]/, "").replace(/["'`]$/, "")
+      .trim())
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("\n");
 }

@@ -925,6 +925,34 @@ function DeploymentDetail({ op, d }) {
   const url = `${SITE}/u/${op.handle}/d/${d.id}`;
   const broadcast = `🛰  ${KIND_LABEL[d.kind].toUpperCase()} — ${d.title}\n\n@${op.handle} · NRO\n${url}`;
   const [copied, setCopied] = useState(false);
+  const [assess, setAssess] = useState(null);
+  const [assessBusy, setAssessBusy] = useState(false);
+  const [assessErr, setAssessErr] = useState(null);
+
+  // AI assessment — cached in localStorage so repeat views don't burn tokens
+  useEffect(() => {
+    const cacheKey = `nro:assess:${d.id}`;
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) { setAssess(JSON.parse(cached)); return; }
+    } catch {}
+    setAssessBusy(true);
+    fetch("/api/ai/assess", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deployment: {
+        id: d.id, kind: d.kind, title: d.title, description: d.description, url: d.url,
+        handle: op.handle, rank: op.rank, xp_awarded: d.xp_awarded, streak_days: op.streak_days,
+      }}),
+    }).then(async r => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      setAssess(data);
+      try { localStorage.setItem(cacheKey, JSON.stringify(data)); } catch {}
+    }).catch(e => setAssessErr(String(e?.message || e).toUpperCase()))
+    .finally(() => setAssessBusy(false));
+  }, [d.id]);
+
+  const lines = (assess?.text || "").split("\n").map(s => s.trim()).filter(Boolean);
   return html`<main class="container" style="max-width:720px;padding:40px 24px">
     <${Link} href=${`/u/${op.handle}`} style="font-family:var(--mono);font-size:10px;color:var(--mute);letter-spacing:3px">← @${op.handle} DOSSIER</${Link}>
     <${Panel} corners=${true} glow=${true} style="margin-top:14px">
@@ -939,6 +967,28 @@ function DeploymentDetail({ op, d }) {
         <div style="margin-top:24px;display:flex;flex-wrap:wrap;gap:14px;font-family:var(--mono);font-size:11px;color:var(--mute)">
           <span>${relTime(d.created_at)}</span>
           ${d.url ? html`<a href=${d.url} target="_blank" style="color:var(--glow)">OPEN ↗</a>` : null}
+        </div>
+        <div style="margin-top:24px;padding-top:24px;border-top:1px solid var(--line)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <div class="lbl">// TACTICAL ASSESSMENT · AI</div>
+            <button class="btn" style="padding:3px 9px;font-size:9px" disabled=${assessBusy} onClick=${() => {
+              try { localStorage.removeItem(`nro:assess:${d.id}`); } catch {}
+              setAssess(null); setAssessErr(null); setAssessBusy(true);
+              fetch("/api/ai/assess", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ deployment: { id: d.id, kind: d.kind, title: d.title, description: d.description, url: d.url, handle: op.handle, rank: op.rank, xp_awarded: d.xp_awarded, streak_days: op.streak_days }})})
+                .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.error); setAssess(data); try { localStorage.setItem(`nro:assess:${d.id}`, JSON.stringify(data)); } catch {} })
+                .catch(e => setAssessErr(String(e?.message || e).toUpperCase()))
+                .finally(() => setAssessBusy(false));
+            }}>${assessBusy ? "..." : "RE-ASSESS"}</button>
+          </div>
+          <div style="display:flex;gap:14px;align-items:flex-start;border:1px solid var(--line);background:rgba(17,17,20,.6);padding:14px">
+            <div style="flex-shrink:0;width:38px;height:38px;border:1px solid var(--glow);background:var(--glowsoft);display:grid;place-items:center;font-family:var(--mono);font-size:10px;letter-spacing:2px;color:var(--glow)">AI</div>
+            <div style="flex:1;min-width:0">
+              ${assessBusy && !assess ? html`<div style="font-family:var(--mono);font-size:11px;color:var(--mute);letter-spacing:2px"><span class="dot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--glow);margin-right:8px;animation:pulse 1.6s infinite"></span>ASSESSING DEPLOYMENT…</div>` : null}
+              ${assessErr ? html`<div style="font-family:var(--mono);font-size:11px;color:var(--danger)">// AI OFFLINE: ${assessErr}</div>` : null}
+              ${lines[0] ? html`<div style="font-family:var(--display);font-size:16px;line-height:1.45;color:var(--text)">${lines[0]}</div>` : null}
+              ${lines[1] ? html`<div style="margin-top:6px;font-size:13px;line-height:1.55;color:var(--dim)">${lines[1]}</div>` : null}
+            </div>
+          </div>
         </div>
         <div style="margin-top:24px;padding-top:24px;border-top:1px solid var(--line)">
           <div class="lbl" style="margin-bottom:8px">// BROADCAST</div>
