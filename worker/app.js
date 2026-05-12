@@ -161,6 +161,12 @@ async function insertOperator(row, signal) {
 async function insertDeployment(row, signal) {
   return supaRest({ method: "POST", path: "deployments?select=id", body: row, signal, requireAuth: true });
 }
+async function insertProject(row, signal) {
+  return supaRest({ method: "POST", path: "projects", body: row, signal, requireAuth: true });
+}
+async function deleteProject(id, userId, signal) {
+  return supaRest({ method: "DELETE", path: `projects?id=eq.${encodeURIComponent(id)}&operator_id=eq.${encodeURIComponent(userId)}`, body: undefined, signal, prefer: "return=minimal", requireAuth: true });
+}
 
 // ====================================================================
 // FEDERATION HOOKS — fire-and-forget broadcasts to NROS via /api/nros/broadcast.
@@ -1435,7 +1441,7 @@ function Projects() {
       if (!/^[a-z0-9-]{2,40}$/.test(sl)) throw new Error("SLUG: 2–40 chars, lowercase, dashes.");
       if (!f.name.trim()) throw new Error("NAME REQUIRED.");
       const toCents = (v) => { const n = parseFloat(v); return isFinite(n) && n >= 0 ? Math.round(n * 100) : 0; };
-      const { data, error } = await supa.from("projects").insert({
+      const row = {
         operator_id: a.user.id,
         name: f.name.trim().slice(0, 60),
         slug: sl,
@@ -1452,17 +1458,29 @@ function Projects() {
         users_count: Math.max(0, parseInt(f.users_count) || 0),
         buyer: f.buyer.trim() || null,
         featured: !!f.featured,
-      }).select("*").single();
-      if (error) throw new Error(error.message);
-      setProjects(p => [data, ...p]); setShowForm(false); reset();
+      };
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 20000);
+      let res;
+      try { res = await insertProject(row, ac.signal); } finally { clearTimeout(timer); }
+      if (!res.ok) throw new Error(res.error || "Insert failed.");
+      const fresh = res.data || row;
+      setProjects(p => [fresh, ...p]); setShowForm(false); reset();
     } catch (e) {
+      console.error("[NRO:project-save] failed:", e);
       setErr(String(e?.message || e));
     } finally { setBusy(false); }
   }
   async function del(id, projName) {
     if (!confirm(`Delete project ${projName}? Deployments will be unlinked.`)) return;
-    const { error } = await supa.from("projects").delete().eq("id", id).eq("operator_id", a.user.id);
-    if (!error) setProjects(p => p.filter(x => x.id !== id));
+    try {
+      const res = await deleteProject(id, a.user.id);
+      if (!res.ok) throw new Error(res.error || "Delete failed.");
+      setProjects(p => p.filter(x => x.id !== id));
+    } catch (e) {
+      console.error("[NRO:project-del]", e);
+      alert("Delete failed · " + (e?.message || e));
+    }
   }
   if (!a.operator) return html`<${CommandSkeleton}/>`;
   return html`
