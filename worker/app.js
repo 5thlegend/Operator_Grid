@@ -961,6 +961,7 @@ function Command() {
       </${Panel}>
 
       <${AICoach} op=${op} deps=${deps} daysSinceLast=${daysSinceLast} />
+      <${ShareDossier} op=${op} />
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:24px">
         <${ActionCard} href="/command/deploy" label="LOG DEPLOYMENT" hint="Stamp the record. Earn XP." accent=${true} />
         <${ActionCard} href="/command/projects" label="PROJECTS" hint=${`${projects.length} on file`} />
@@ -1020,6 +1021,28 @@ function AICoach({ op, deps, daysSinceLast }) {
         ${lines[0] ? html`<div style="font-family:var(--display);font-size:18px;line-height:1.4;color:var(--text)">${lines[0]}</div>` : null}
         ${lines[1] ? html`<div style="margin-top:8px;font-size:14px;line-height:1.55;color:var(--dim)">${lines[1]}</div>` : null}
         ${lines.length === 0 && !busy && !err ? html`<div style="color:var(--mute);font-size:13px">Press RE-QUERY for advisor briefing.</div>` : null}
+      </div>
+    </div>
+  </${Panel}>`;
+}
+
+function ShareDossier({ op }) {
+  const [copied, setCopied] = useState(false);
+  const url = `${SITE}/r/${op.handle}`;
+  const dossier = `${SITE}/u/${op.handle}`;
+  const tweet = `building in public. all my deploys + revenue on the operator grid\n\nfollow my pings here: ${url}`;
+  function copy(v) { navigator.clipboard.writeText(v); setCopied(true); setTimeout(() => setCopied(false), 1800); }
+  return html`<${Panel} corners=${true} style="margin-top:24px">
+    <div class="panel-head"><span class="lbl">// RECRUIT URL · COLD-ARRIVAL ENGINE</span><span class="hint">${op.recruit_count || 0} ENLISTED VIA YOU</span></div>
+    <div style="padding:18px;display:flex;flex-direction:column;gap:12px">
+      <div style="font-size:13px;color:var(--dim);line-height:1.5">Drop this link in your X bio, GitHub README, newsletter sig — every click lands on your dossier with a clear ENLIST CTA and credits you on signup. <b style="color:var(--glow)">+50 momentum</b> each time a recruit hits OPERATOR rank.</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:stretch">
+        <div style="flex:1;min-width:240px;display:flex;align-items:center;padding:10px 14px;border:1px solid var(--line2);background:rgba(0,0,0,.4);font-family:var(--mono);font-size:13px;color:var(--glow);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${url.replace(/^https?:\/\//, "")}</div>
+        <button class="btn" onClick=${() => copy(url)}>${copied ? "COPIED" : "COPY LINK"}</button>
+        <a class="btn btn-glow" target="_blank" rel="noopener noreferrer" href=${`https://x.com/intent/tweet?text=${encodeURIComponent(tweet)}`}>POST TO X</a>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:14px;font-family:var(--mono);font-size:10px;color:var(--mute);letter-spacing:1.5px">
+        <span>// PUBLIC DOSSIER: <a href=${dossier} target="_blank" rel="noopener noreferrer" style="color:var(--dim)">${dossier.replace(/^https?:\/\//, "")}</a></span>
       </div>
     </div>
   </${Panel}>`;
@@ -1503,13 +1526,29 @@ function Dossier({ handle, deploymentId }) {
             <${Stat} label="Momentum" value=${op.momentum} accent="glow" hint="14D" />
           </div>
         </div>
-        <div class="stats-row" style="border-top:1px solid var(--line)">
-          <${Stat} label="Signal Score" value=${Number(op.signal_score||0).toFixed(1)} accent="glow" hint="0–10" />
-          <${Stat} label="Total XP" value=${op.xp} />
-          <${Stat} label="Deployments" value=${deps.length} />
-          <${Stat} label="Streak" value=${op.streak_days > 0 ? html`<span class="streak-flame">${op.streak_days}d</span>` : `${op.streak_days}d`} hint="CONSECUTIVE" />
-          <${Stat} label="Recruits" value=${html`<${CountUp} to=${op.recruit_count || 0}/>`} accent="glow" hint="OPERATORS ENLISTED" />
-        </div>
+        ${(() => {
+          // Aggregate revenue across all portfolio projects.
+          // Monthly equivalent: MRR + ARR/12 + lifetime-sales counted once.
+          const monthlyCents = projects.reduce((s, p) => s + (p.mrr_cents || 0) + Math.floor((p.arr_cents || 0) / 12), 0);
+          const lifetimeCents = projects.reduce((s, p) => s + (p.last_sale_cents || 0), 0);
+          const totalUsers = projects.reduce((s, p) => s + (p.users_count || 0), 0);
+          const showRevenue = monthlyCents > 0 || lifetimeCents > 0;
+          const totalRevDisplay = monthlyCents > 0
+            ? fmtMoney(monthlyCents)
+            : lifetimeCents > 0
+            ? fmtMoney(lifetimeCents)
+            : "—";
+          const revHint = monthlyCents > 0 ? "/MO EQUIV" : lifetimeCents > 0 ? "LIFETIME SALES" : "";
+          return html`<div class="stats-row" style="border-top:1px solid var(--line)">
+            <${Stat} label="Signal Score" value=${Number(op.signal_score||0).toFixed(1)} accent="glow" hint="0–10" />
+            <${Stat} label="Total XP" value=${html`<${CountUp} to=${op.xp}/>`} />
+            <${Stat} label="Deployments" value=${html`<${CountUp} to=${deps.length}/>`} />
+            <${Stat} label="Streak" value=${op.streak_days > 0 ? html`<span class="streak-flame">${op.streak_days}d</span>` : `${op.streak_days}d`} hint="CONSECUTIVE" />
+            <${Stat} label="Recruits" value=${html`<${CountUp} to=${op.recruit_count || 0}/>`} accent="glow" hint="OPERATORS ENLISTED" />
+            ${showRevenue ? html`<${Stat} label="Tracked Revenue" value=${html`<${CountUp} to=${monthlyCents > 0 ? monthlyCents : lifetimeCents} format=${fmtMoney}/>`} accent="gold" hint=${revHint} />` : null}
+            ${totalUsers > 0 ? html`<${Stat} label="Total Users" value=${html`<${CountUp} to=${totalUsers} format=${fmtUsers}/>`} accent="glow" hint="ACROSS PROJECTS" />` : null}
+          </div>`;
+        })()}
         ${op.recruited_by_op ? html`<div style="padding:10px 18px;border-top:1px solid var(--line);font-family:var(--mono);font-size:11px;color:var(--mute);letter-spacing:2px">RECRUITED BY <${Link} href=${`/u/${op.recruited_by_op.handle}`} style="color:var(--glow);text-decoration:underline">@${op.recruited_by_op.handle}</${Link}></div>` : null}
         <div style="padding:18px;border-top:1px solid var(--line)"><${RankProgress} rank=${op.rank} xp=${op.xp} /></div>
       </${Panel}>
