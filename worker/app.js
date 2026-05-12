@@ -66,15 +66,66 @@ async function geocodeUS(query) {
   if (!ENV.MAPBOX_TOKEN || ENV.MAPBOX_TOKEN.includes("placeholder")) return null;
   const q = query.trim();
   if (q.length < 2) return null;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 5000); // hard 5s cap
   try {
-    const r = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?country=us&types=place,region&limit=1&access_token=${ENV.MAPBOX_TOKEN}`);
+    const r = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?country=us&types=place,address,poi,neighborhood&limit=1&access_token=${ENV.MAPBOX_TOKEN}`, { signal: ctrl.signal });
     if (!r.ok) return null;
     const data = await r.json();
     const f = data.features?.[0];
     if (!f) return null;
     const [lng, lat] = f.center;
     return { lat, lng, place_name: f.place_name };
-  } catch { return null; }
+  } catch (e) {
+    console.warn("[NRO:geocode] failed:", e?.message || e);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Generic timeout wrapper for any promise
+function withTimeout(promise, ms, label = "operation") {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms))
+  ]);
+}
+
+// ====================================================================
+// SOCIAL NORMALIZATION + ICONS
+// ====================================================================
+const SOCIALS = [
+  { key: "link_site",       label: "Website",     icon: "globe",      placeholder: "https://yoursite.com",    toUrl: (v) => /^https?:/.test(v) ? v : "https://" + v, toLabel: (v) => { try { return new URL(/^https?:/.test(v) ? v : "https://" + v).host.replace(/^www\./, ""); } catch { return v; } } },
+  { key: "link_x",          label: "X / Twitter", icon: "x",          placeholder: "@handle",                  toUrl: (v) => /^https?:/.test(v) ? v : `https://x.com/${v.replace(/^@/, "")}`, toLabel: (v) => "@" + v.replace(/^@/, "").replace(/^https?:.*\//, "") },
+  { key: "link_github",     label: "GitHub",      icon: "github",     placeholder: "username",                 toUrl: (v) => /^https?:/.test(v) ? v : `https://github.com/${v.replace(/^@/, "")}`, toLabel: (v) => v.replace(/^https?:\/\/(?:www\.)?github\.com\//, "").replace(/^@/, "") },
+  { key: "link_youtube",    label: "YouTube",     icon: "youtube",    placeholder: "@channel or full URL",     toUrl: (v) => /^https?:/.test(v) ? v : `https://youtube.com/${v.startsWith("@") ? v : "@" + v}`, toLabel: (v) => v.startsWith("@") ? v : "@" + v.replace(/^https?:.*[\/@]/, "") },
+  { key: "link_tiktok",     label: "TikTok",      icon: "tiktok",     placeholder: "@handle",                  toUrl: (v) => /^https?:/.test(v) ? v : `https://tiktok.com/@${v.replace(/^@/, "")}`, toLabel: (v) => "@" + v.replace(/^@/, "").replace(/^https?:.*@/, "") },
+  { key: "link_instagram",  label: "Instagram",   icon: "instagram",  placeholder: "@handle",                  toUrl: (v) => /^https?:/.test(v) ? v : `https://instagram.com/${v.replace(/^@/, "")}`, toLabel: (v) => "@" + v.replace(/^@/, "").replace(/^https?:.*\//, "") },
+  { key: "link_linkedin",   label: "LinkedIn",    icon: "linkedin",   placeholder: "username or full URL",     toUrl: (v) => /^https?:/.test(v) ? v : `https://linkedin.com/in/${v.replace(/^@/, "")}`, toLabel: (v) => v.replace(/^https?:\/\/(?:www\.)?linkedin\.com\/in\//, "").replace(/\/$/, "") },
+  { key: "link_farcaster",  label: "Farcaster",   icon: "farcaster",  placeholder: "@handle (Warpcast)",       toUrl: (v) => /^https?:/.test(v) ? v : `https://warpcast.com/${v.replace(/^@/, "")}`, toLabel: (v) => "@" + v.replace(/^@/, "").replace(/^https?:.*\//, "") },
+  { key: "link_discord",    label: "Discord",     icon: "discord",    placeholder: "username (or invite URL)", toUrl: (v) => /^https?:/.test(v) ? v : `https://discord.com/users/${v.replace(/^@/, "")}`, toLabel: (v) => "@" + v.replace(/^@/, "").replace(/^https?:.*\//, "") },
+  { key: "link_producthunt",label: "Product Hunt",icon: "ph",         placeholder: "@username",                toUrl: (v) => /^https?:/.test(v) ? v : `https://producthunt.com/@${v.replace(/^@/, "")}`, toLabel: (v) => "@" + v.replace(/^@/, "").replace(/^https?:.*@/, "") },
+  { key: "link_substack",   label: "Substack",    icon: "substack",   placeholder: "yoursub.substack.com",     toUrl: (v) => /^https?:/.test(v) ? v : `https://${v}`, toLabel: (v) => v.replace(/^https?:\/\//, "").replace(/^www\./, "") },
+  { key: "link_telegram",   label: "Telegram",    icon: "telegram",   placeholder: "@username",                toUrl: (v) => /^https?:/.test(v) ? v : `https://t.me/${v.replace(/^@/, "")}`, toLabel: (v) => "@" + v.replace(/^@/, "").replace(/^https?:.*\//, "") },
+];
+
+function SocialGlyph({ icon }) {
+  const G = {
+    globe:     html`<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6.5"/><ellipse cx="8" cy="8" rx="2.5" ry="6.5"/><line x1="1.5" y1="8" x2="14.5" y2="8"/></svg>`,
+    x:         html`<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M18.244 2H21.5l-7.6 8.69L23 22h-7.05l-5.516-7.246L4.118 22H.86l8.13-9.293L1 2h7.21l4.99 6.6L18.244 2Zm-2.46 18h2.078L7.318 4H5.16l10.624 16Z"/></svg>`,
+    github:    html`<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 .5C5.6.5.5 5.6.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.4-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.2 1.2.9-.3 1.9-.4 2.9-.4s2 .1 2.9.4c2.2-1.5 3.2-1.2 3.2-1.2.6 1.6.2 2.8.1 3.1.7.8 1.2 1.9 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.3.8 1 .8 2v3c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.6 18.4.5 12 .5Z"/></svg>`,
+    youtube:   html`<svg viewBox="0 0 24 24" width="16" height="14" fill="currentColor"><path d="M23 7c-.3-1-1-1.8-2-2.1-1.8-.5-9-.5-9-.5s-7.2 0-9 .5C2 4.7 1.3 5.5 1 6.5.5 8.3.5 12 .5 12s0 3.7.5 5.5c.3 1 1 1.8 2 2.1 1.8.5 9 .5 9 .5s7.2 0 9-.5c1-.3 1.7-1.1 2-2.1.5-1.8.5-5.5.5-5.5s0-3.7-.5-5.5ZM9.7 15.5v-7L15.6 12l-5.9 3.5Z"/></svg>`,
+    tiktok:    html`<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M19.6 5.8a4.5 4.5 0 0 1-2.7-1c-.8-.7-1.3-1.6-1.4-2.6V2h-3.4v12.7a2.6 2.6 0 0 1-2.6 2.5 2.6 2.6 0 0 1-2.6-2.6 2.6 2.6 0 0 1 3-2.6V8.6a5.9 5.9 0 0 0-5.6 9 5.9 5.9 0 0 0 10-4.2V8a7.8 7.8 0 0 0 5.3 1.9V6.5h-.1Z"/></svg>`,
+    instagram: html`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/></svg>`,
+    linkedin:  html`<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M4.98 3.5C4.98 4.88 3.87 6 2.5 6S0 4.88 0 3.5 1.12 1 2.5 1s2.48 1.12 2.48 2.5ZM0 8h5v16H0V8Zm7.5 0H12v2.2c.6-1 2-2.4 4.5-2.4 4.8 0 5.5 3 5.5 6.9V24h-5v-7.5c0-1.8 0-4.2-2.6-4.2-2.6 0-3 2-3 4V24h-4.4V8Z"/></svg>`,
+    farcaster: html`<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M5 3h14v2h-2v14h2v2h-7v-2h2v-6h-4v6h2v2H5v-2h2V5H5V3Z"/></svg>`,
+    discord:   html`<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M20 4.4A18 18 0 0 0 16 3.3l-.2.5a14 14 0 0 0-7.6 0L8 3.3A18 18 0 0 0 4 4.4 19 19 0 0 0 .8 17.6 18 18 0 0 0 6.4 20l1-1.7a12 12 0 0 1-2-1l.5-.4a13 13 0 0 0 11.2 0l.5.4a12 12 0 0 1-2 1l1 1.7a18 18 0 0 0 5.6-2.4A19 19 0 0 0 20 4.4Zm-12 11c-1 0-1.8-1-1.8-2.2 0-1.2.8-2.2 1.8-2.2 1 0 1.8 1 1.8 2.2 0 1.2-.8 2.2-1.8 2.2Zm8 0c-1 0-1.8-1-1.8-2.2 0-1.2.8-2.2 1.8-2.2 1 0 1.8 1 1.8 2.2 0 1.2-.8 2.2-1.8 2.2Z"/></svg>`,
+    ph:        html`<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm1.2 11.5H10v3.5H8V7h5.2c1.8 0 3.3 1.5 3.3 3.3 0 1.7-1.5 3.2-3.3 3.2Zm0-4.5H10v3h3.2c.8 0 1.5-.7 1.5-1.5S14 9 13.2 9Z"/></svg>`,
+    substack:  html`<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M22 7H2V4h20v3Zm0 4H2v3h20v-3ZM2 22l10-5 10 5V15H2v7Z"/></svg>`,
+    telegram:  html`<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M9.78 18.65l.28-4.23 7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3 3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.33 1.43.18 1.15 1.3l-2.72 12.81c-.19.91-.74 1.13-1.5.71L12.6 16.3l-1.99 1.93c-.23.23-.42.42-.83.42Z"/></svg>`,
+  };
+  return G[icon] || G.globe;
 }
 const STACK_OPTIONS = [
   "Next.js", "React", "Tailwind", "Supabase", "Cloudflare", "Postgres",
@@ -403,25 +454,32 @@ function Onboarding() {
   const [busy, setBusy] = useState(false);
   useEffect(() => { if (!a.loading && !a.user) navigate("/login"); if (!a.loading && a.operator) navigate("/command"); }, [a.loading, a.user, a.operator]);
   async function submit(e) {
-    e.preventDefault(); setErr(null); setBusy(true);
-    if (!/^[a-z0-9_]{2,24}$/.test(handle)) { setErr("Callsign: 2–24 chars, lowercase, numbers, underscore."); setBusy(false); return; }
-    let lat = null, lng = null;
-    if (city.trim()) {
-      const geo = await geocodeUS([city, state].filter(Boolean).join(", "));
-      if (geo) { lat = geo.lat; lng = geo.lng; }
+    e.preventDefault();
+    if (busy) return;
+    setErr(null); setBusy(true);
+    try {
+      if (!/^[a-z0-9_]{2,24}$/.test(handle)) throw new Error("CALLSIGN: 2–24 chars, lowercase, numbers, underscore.");
+      let lat = null, lng = null;
+      if (city.trim()) {
+        const geo = await geocodeUS([city, state].filter(Boolean).join(", "));
+        if (geo) { lat = geo.lat; lng = geo.lng; }
+      }
+      if (lat == null) { const fb = fallbackGeo(handle); lat = fb.lat; lng = fb.lng; }
+      const row = {
+        id: a.user.id, handle: handle.toLowerCase(), display_name: name.trim().slice(0, 48) || handle,
+        tagline: tagline.trim().slice(0, 120) || null, city: city.trim() || null, state: state.trim().toUpperCase() || null,
+        lat, lng,
+      };
+      const { error } = await withTimeout(supa.from("operators").insert(row), 12000, "supabase insert");
+      if (error) throw new Error(error.message || "Insert failed.");
+      auth.set({ operator: { ...row, rank: "INITIATE", xp: 0, momentum: 0, signal_score: 0, streak_days: 0, followers: 0, active_users: 0, created_at: new Date().toISOString() } });
+      loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); });
+      navigate("/command");
+    } catch (e) {
+      console.error("[NRO:onboarding] failed:", e);
+      setErr(String(e?.message || e));
+      setBusy(false);
     }
-    if (lat == null) { const fb = fallbackGeo(handle); lat = fb.lat; lng = fb.lng; }
-    const row = {
-      id: a.user.id, handle: handle.toLowerCase(), display_name: name.trim().slice(0, 48) || handle,
-      tagline: tagline.trim().slice(0, 120) || null, city: city.trim() || null, state: state.trim().toUpperCase() || null,
-      lat, lng,
-    };
-    const { error } = await supa.from("operators").insert(row);
-    if (error) { setErr(error.message); setBusy(false); return; }
-    // Optimistic local state so the redirect doesn't bounce through onboarding again.
-    auth.set({ operator: { ...row, rank: "INITIATE", xp: 0, momentum: 0, signal_score: 0, streak_days: 0, followers: 0, active_users: 0, created_at: new Date().toISOString() } });
-    loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); });
-    navigate("/command");
   }
   if (a.loading || !a.user) return html`<${Nav} /><main class="container center"><span class="tag">// INITIALIZING…</span></main>`;
   return html`
@@ -615,12 +673,22 @@ function Deploy() {
   const [err, setErr] = useState(null);
   useEffect(() => { if (!a.loading && !a.user) navigate("/login"); }, [a.loading, a.user]);
   async function submit(e) {
-    e.preventDefault(); setBusy(true); setErr(null);
-    const { data, error } = await supa.from("deployments").insert({ operator_id: a.user.id, kind, title: title.trim(), description: desc.trim() || null, url: url.trim() || null }).select("id").single();
-    if (error) { setErr(error.message); setBusy(false); return; }
-    // Refresh operator stats in background, navigate immediately so user sees their deployment.
-    loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); });
-    navigate(`/u/${a.operator.handle}/d/${data.id}`);
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true); setErr(null);
+    try {
+      const { data, error } = await withTimeout(
+        supa.from("deployments").insert({ operator_id: a.user.id, kind, title: title.trim(), description: desc.trim() || null, url: url.trim() || null }).select("id").single(),
+        12000, "supabase deploy"
+      );
+      if (error) throw new Error(error.message || "Deploy failed.");
+      loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); });
+      navigate(`/u/${a.operator.handle}/d/${data.id}`);
+    } catch (e) {
+      console.error("[NRO:deploy] failed:", e);
+      setErr(String(e?.message || e));
+      setBusy(false);
+    }
   }
   if (!a.operator) return html`<${Nav} /><main class="container center"><span class="tag">// LOADING…</span></main>`;
   return html`
@@ -656,90 +724,155 @@ function Deploy() {
 function Profile() {
   const a = useAuth();
   const op = a.operator;
-  const [name, setName] = useState("");
-  const [tagline, setTagline] = useState("");
-  const [bio, setBio] = useState("");
-  const [location, setLocation] = useState("");
-  const [city, setCity] = useState("");
-  const [state, setState] = useState("");
-  const [avatar, setAvatar] = useState("");
-  const [linkSite, setLinkSite] = useState("");
-  const [linkX, setLinkX] = useState("");
-  const [linkGh, setLinkGh] = useState("");
-  const [current, setCurrent] = useState("");
+  // Single state object — fewer setState chains = fewer re-render races
+  const [f, setF] = useState({
+    display_name: "", tagline: "", bio: "", location: "",
+    city: "", state: "", avatar_url: "", current_project: "",
+    link_site: "", link_x: "", link_github: "",
+    link_youtube: "", link_tiktok: "", link_instagram: "",
+    link_linkedin: "", link_farcaster: "", link_discord: "",
+    link_producthunt: "", link_substack: "", link_telegram: "",
+  });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [showSocials, setShowSocials] = useState(false);
+  const update = (k, v) => setF(s => ({ ...s, [k]: v }));
+
   useEffect(() => {
     if (!a.loading && !a.user) navigate("/login");
     if (!a.loading && a.user && !a.operator) navigate("/onboarding");
   }, [a.loading, a.user, a.operator]);
+
+  // Populate fields on operator hydrate. Watches op?.id so it doesn't clobber edits.
   useEffect(() => {
     if (!op) return;
-    setName(op.display_name || ""); setTagline(op.tagline || ""); setBio(op.bio || "");
-    setLocation(op.location || ""); setCity(op.city || ""); setState(op.state || "");
-    setAvatar(op.avatar_url || ""); setLinkSite(op.link_site || ""); setLinkX(op.link_x || "");
-    setLinkGh(op.link_github || ""); setCurrent(op.current_project || "");
+    setF({
+      display_name: op.display_name || "",
+      tagline: op.tagline || "",
+      bio: op.bio || "",
+      location: op.location || "",
+      city: op.city || "",
+      state: op.state || "",
+      avatar_url: op.avatar_url || "",
+      current_project: op.current_project || "",
+      link_site: op.link_site || "",
+      link_x: op.link_x || "",
+      link_github: op.link_github || "",
+      link_youtube: op.link_youtube || "",
+      link_tiktok: op.link_tiktok || "",
+      link_instagram: op.link_instagram || "",
+      link_linkedin: op.link_linkedin || "",
+      link_farcaster: op.link_farcaster || "",
+      link_discord: op.link_discord || "",
+      link_producthunt: op.link_producthunt || "",
+      link_substack: op.link_substack || "",
+      link_telegram: op.link_telegram || "",
+    });
   }, [op?.id]);
+
   async function submit(e) {
-    e.preventDefault(); setMsg(null); setBusy(true);
-    if (!name.trim()) { setMsg({ type: "err", text: "DISPLAY NAME REQUIRED." }); setBusy(false); return; }
-    let lat = op.lat, lng = op.lng;
-    const newCity = city.trim() || null;
-    const newState = state.trim().toUpperCase() || null;
-    if (newCity && (newCity !== op.city || newState !== op.state)) {
-      const geo = await geocodeUS([newCity, newState].filter(Boolean).join(", "));
-      if (geo) { lat = geo.lat; lng = geo.lng; }
-    } else if (!newCity) { lat = null; lng = null; }
-    const updated = {
-      display_name: name.trim().slice(0, 48),
-      tagline: tagline.trim().slice(0, 120) || null,
-      bio: bio.trim().slice(0, 600) || null,
-      location: location.trim().slice(0, 48) || null,
-      city: newCity, state: newState, lat, lng,
-      avatar_url: avatar.trim().slice(0, 300) || null,
-      link_site: linkSite.trim().slice(0, 200) || null,
-      link_x: linkX.trim().slice(0, 60) || null,
-      link_github: linkGh.trim().slice(0, 60) || null,
-      current_project: current.trim().slice(0, 60) || null,
-    };
-    const { error } = await supa.from("operators").update(updated).eq("id", a.user.id);
-    setBusy(false);
-    if (error) { setMsg({ type: "err", text: error.message.toUpperCase() }); return; }
-    // Update local auth state by merging — DON'T nuke it if reload fails.
-    auth.set({ operator: { ...op, ...updated } });
-    // Best-effort refresh from server, but tolerate null.
-    loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); });
-    setMsg({ type: "ok", text: "DOSSIER UPDATED · RETURNING TO COMMAND…" });
-    setTimeout(() => navigate("/command"), 900);
+    e.preventDefault();
+    if (busy) return;                // hard guard against double-submit
+    setMsg(null);
+    setBusy(true);
+
+    try {
+      if (!f.display_name.trim()) throw new Error("DISPLAY NAME REQUIRED.");
+
+      // Geocode only if city changed and is non-empty — bounded to 5s by geocodeUS.
+      let lat = op.lat, lng = op.lng;
+      const newCity = f.city.trim() || null;
+      const newState = f.state.trim().toUpperCase() || null;
+      if (newCity && (newCity !== op.city || newState !== op.state)) {
+        const geo = await geocodeUS([newCity, newState].filter(Boolean).join(", "));
+        if (geo) { lat = geo.lat; lng = geo.lng; }
+      } else if (!newCity) { lat = null; lng = null; }
+
+      const nullable = (v, max) => { const s = (v ?? "").trim(); return s ? s.slice(0, max) : null; };
+      const updated = {
+        display_name: f.display_name.trim().slice(0, 48),
+        tagline: nullable(f.tagline, 120),
+        bio: nullable(f.bio, 600),
+        location: nullable(f.location, 48),
+        city: newCity, state: newState, lat, lng,
+        avatar_url: nullable(f.avatar_url, 300),
+        current_project: nullable(f.current_project, 60),
+        link_site: nullable(f.link_site, 200),
+        link_x: nullable(f.link_x, 60),
+        link_github: nullable(f.link_github, 60),
+        link_youtube: nullable(f.link_youtube, 200),
+        link_tiktok: nullable(f.link_tiktok, 60),
+        link_instagram: nullable(f.link_instagram, 60),
+        link_linkedin: nullable(f.link_linkedin, 200),
+        link_farcaster: nullable(f.link_farcaster, 60),
+        link_discord: nullable(f.link_discord, 200),
+        link_producthunt: nullable(f.link_producthunt, 60),
+        link_substack: nullable(f.link_substack, 200),
+        link_telegram: nullable(f.link_telegram, 60),
+      };
+
+      // Supabase update with hard 12s timeout so the UI never hangs forever.
+      const { error } = await withTimeout(
+        supa.from("operators").update(updated).eq("id", a.user.id),
+        12000, "supabase update"
+      );
+      if (error) throw new Error(error.message || "Update failed.");
+
+      // Merge locally first — never let a null reload nuke auth state.
+      auth.set({ operator: { ...op, ...updated } });
+      // Best-effort refresh from server in background.
+      loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); });
+
+      setMsg({ type: "ok", text: "DOSSIER UPDATED · RETURNING TO COMMAND…" });
+      setTimeout(() => navigate("/command"), 800);
+      // busy stays true through redirect so user can't double-fire
+    } catch (err) {
+      console.error("[NRO:profile-save] failed:", err);
+      setMsg({ type: "err", text: String(err?.message || err).toUpperCase() });
+      setBusy(false);
+    }
   }
+
   if (!op) return html`<${Nav} /><main class="container center"><span class="tag">// LOADING…</span></main>`;
   return html`
     <${Nav} variant="command" />
-    <main class="container" style="max-width:720px;padding:40px 24px">
+    <main class="container" style="max-width:760px;padding:40px 24px">
       <span class="tag">// EDIT DOSSIER</span>
       <h1 style="font-family:var(--display);font-size:32px;font-weight:700;margin:8px 0 8px">Tune your callsign.</h1>
       <p style="color:var(--dim);margin:0 0 24px">Handle is permanent. Everything else can be re-tuned.</p>
       <${Panel} corners=${true}>
         <div class="panel-head"><span class="lbl">// PROFILE</span></div>
         <form onSubmit=${submit} style="padding:20px">
-          <div style="border:1px solid var(--line);background:rgba(0,0,0,.3);padding:10px 12px;font-family:var(--mono);font-size:10px;color:var(--mute);margin-bottom:16px">CALLSIGN <span style="color:var(--glow)">@${op.handle}</span> · IMMUTABLE</div>
-          <label class="field"><span class="lbl">Display Name</span><input class="input" required value=${name} onInput=${e => setName(e.target.value)} maxLength=${48}/></label>
-          <label class="field"><span class="lbl">Tagline</span><input class="input" value=${tagline} onInput=${e => setTagline(e.target.value)} maxLength=${120}/></label>
-          <label class="field"><span class="lbl">Bio</span><textarea class="textarea" value=${bio} onInput=${e => setBio(e.target.value)} maxLength=${600} rows="4"/></label>
-          <div style="display:grid;grid-template-columns:2fr 1fr 2fr;gap:12px">
-            <label class="field"><span class="lbl">City</span><input class="input" value=${city} onInput=${e => setCity(e.target.value)} maxLength=${48} placeholder="Los Angeles"/></label>
-            <label class="field"><span class="lbl">State</span><input class="input" style="text-transform:uppercase;font-family:var(--mono)" value=${state} onInput=${e => setState(e.target.value.toUpperCase().slice(0,2))} maxLength=${2}/></label>
-            <label class="field"><span class="lbl">Location (display)</span><input class="input" value=${location} onInput=${e => setLocation(e.target.value)} maxLength=${48} placeholder="Pacific NW"/></label>
-          </div>
-          <label class="field"><span class="lbl">Current Project</span><input class="input" value=${current} onInput=${e => setCurrent(e.target.value)} maxLength=${60}/></label>
-          <label class="field"><span class="lbl">Avatar URL</span><input class="input" value=${avatar} onInput=${e => setAvatar(e.target.value)} maxLength=${300}/></label>
-          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
-            <label class="field"><span class="lbl">Site</span><input class="input" value=${linkSite} onInput=${e => setLinkSite(e.target.value)} placeholder="https://"/></label>
-            <label class="field"><span class="lbl">X / Twitter</span><input class="input" value=${linkX} onInput=${e => setLinkX(e.target.value)} placeholder="@handle"/></label>
-            <label class="field"><span class="lbl">GitHub</span><input class="input" value=${linkGh} onInput=${e => setLinkGh(e.target.value)} placeholder="username"/></label>
-          </div>
-          ${msg ? html`<p style=${`font-family:var(--mono);font-size:11px;margin:8px 0;color:${msg.type === 'ok' ? 'var(--glow)' : 'var(--danger)'}`}>${msg.text}</p>` : null}
-          <button class="btn btn-primary btn-block" type="submit" disabled=${busy}>${busy ? "SAVING…" : "SAVE DOSSIER"}</button>
+          <fieldset disabled=${busy} style="border:0;padding:0;margin:0">
+            <div style="border:1px solid var(--line);background:rgba(0,0,0,.3);padding:10px 12px;font-family:var(--mono);font-size:10px;color:var(--mute);margin-bottom:16px">CALLSIGN <span style="color:var(--glow)">@${op.handle}</span> · IMMUTABLE</div>
+
+            <label class="field"><span class="lbl">Display Name</span><input class="input" required value=${f.display_name} onInput=${e => update("display_name", e.target.value)} maxLength=${48}/></label>
+            <label class="field"><span class="lbl">Tagline</span><input class="input" value=${f.tagline} onInput=${e => update("tagline", e.target.value)} maxLength=${120}/></label>
+            <label class="field"><span class="lbl">Bio</span><textarea class="textarea" value=${f.bio} onInput=${e => update("bio", e.target.value)} maxLength=${600} rows="4"/></label>
+            <div style="display:grid;grid-template-columns:2fr 1fr 2fr;gap:12px">
+              <label class="field"><span class="lbl">City</span><input class="input" value=${f.city} onInput=${e => update("city", e.target.value)} maxLength=${48} placeholder="Pasadena"/></label>
+              <label class="field"><span class="lbl">State</span><input class="input" style="text-transform:uppercase;font-family:var(--mono)" value=${f.state} onInput=${e => update("state", e.target.value.toUpperCase().slice(0,2))} maxLength=${2} placeholder="CA"/></label>
+              <label class="field"><span class="lbl">Location (display)</span><input class="input" value=${f.location} onInput=${e => update("location", e.target.value)} maxLength=${48} placeholder="Sector 2182 · Loma Vista"/></label>
+            </div>
+            <label class="field"><span class="lbl">Current Project</span><input class="input" value=${f.current_project} onInput=${e => update("current_project", e.target.value)} maxLength=${60}/></label>
+            <label class="field"><span class="lbl">Avatar URL</span><input class="input" value=${f.avatar_url} onInput=${e => update("avatar_url", e.target.value)} maxLength=${300}/></label>
+
+            <div style="border-top:1px solid var(--line);padding-top:18px;margin-top:18px">
+              <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onClick=${() => setShowSocials(s => !s)}>
+                <span class="lbl">// SOCIAL NETWORK (12 PLATFORMS)</span>
+                <span style="font-family:var(--mono);font-size:11px;color:var(--glow)">${showSocials ? "▾ HIDE" : "▸ EXPAND"}</span>
+              </div>
+              ${showSocials ? html`<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:14px">
+                ${SOCIALS.map(s => html`<label class="field" key=${s.key} style="margin-bottom:0">
+                  <span class="lbl" style="display:flex;align-items:center;gap:6px;color:var(--dim)"><span style="color:var(--glow);display:inline-flex"><${SocialGlyph} icon=${s.icon}/></span>${s.label}</span>
+                  <input class="input" value=${f[s.key]} onInput=${e => update(s.key, e.target.value)} placeholder=${s.placeholder} maxLength=${200}/>
+                </label>`)}
+              </div>` : null}
+            </div>
+
+            ${msg ? html`<p style=${`font-family:var(--mono);font-size:11px;margin:14px 0;color:${msg.type === 'ok' ? 'var(--glow)' : 'var(--danger)'}`}>${msg.type === 'err' ? '// ERROR · ' : ''}${msg.text}</p>` : null}
+            <button class="btn btn-primary btn-block" type="submit" disabled=${busy} style="margin-top:14px">${busy ? "SAVING…" : "SAVE DOSSIER"}</button>
+          </fieldset>
         </form>
       </${Panel}>
     </main>`;
@@ -873,13 +1006,20 @@ function Dossier({ handle, deploymentId }) {
               <span style="font-family:var(--mono);font-size:13px;color:var(--mute)">@${op.handle}</span>
             </div>
             ${op.tagline ? html`<p style="margin:8px 0 0;color:var(--dim);font-size:15px">${op.tagline}</p>` : null}
-            <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:14px;font-family:var(--mono);font-size:11px;color:var(--mute)">
-              ${op.city ? html`<span>📍 ${op.city}${op.state ? `, ${op.state}` : ""}</span>` : null}
-              ${op.link_site ? html`<a href=${op.link_site} target="_blank" style="color:var(--dim)">🌐 ${prettyHost(op.link_site)}</a>` : null}
-              ${op.link_x ? html`<a href=${op.link_x.startsWith("http") ? op.link_x : `https://x.com/${op.link_x.replace(/^@/,"")}`} target="_blank" style="color:var(--dim)">𝕏 ${op.link_x.replace(/^@/,"")}</a>` : null}
-              ${op.link_github ? html`<a href=${op.link_github.startsWith("http") ? op.link_github : `https://github.com/${op.link_github}`} target="_blank" style="color:var(--dim)">⌥ ${op.link_github.split("/").pop()}</a>` : null}
+            <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;font-family:var(--mono);font-size:11px">
+              ${op.location ? html`<span style="color:var(--glow);border:1px solid rgba(103,232,249,.3);background:rgba(103,232,249,.05);padding:3px 10px">${op.location}</span>` : null}
+              ${op.city ? html`<span style="color:var(--mute);border:1px solid var(--line2);padding:3px 10px">📍 ${op.city}${op.state ? `, ${op.state}` : ""}</span>` : null}
             </div>
             ${op.bio ? html`<p style="margin-top:16px;color:var(--dim);font-size:14px;line-height:1.6;max-width:60ch">${op.bio}</p>` : null}
+            <div style="margin-top:14px;display:flex;flex-wrap:wrap;gap:6px">
+              ${SOCIALS.filter(s => op[s.key]).map(s => html`<a key=${s.key} href=${s.toUrl(op[s.key])} target="_blank" rel="noopener noreferrer" title=${s.label}
+                style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line2);background:rgba(17,17,20,.6);color:var(--dim);padding:5px 10px;font-family:var(--mono);font-size:11px;transition:.15s;text-decoration:none"
+                onMouseEnter=${(e) => { e.currentTarget.style.borderColor = 'var(--glow)'; e.currentTarget.style.color = 'var(--glow)'; }}
+                onMouseLeave=${(e) => { e.currentTarget.style.borderColor = 'var(--line2)'; e.currentTarget.style.color = 'var(--dim)'; }}>
+                <${SocialGlyph} icon=${s.icon}/>
+                ${s.toLabel(op[s.key])}
+              </a>`)}
+            </div>
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:14px">
             <${RankBadge} rank=${op.rank} size="lg" />
