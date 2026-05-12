@@ -2051,25 +2051,28 @@ function SignalMap() {
         </div>` : null}
         <!-- markers overlay -->
         ${ready && mapRef.current ? html`<div style="position:absolute;inset:0;pointer-events:none;z-index:3">
-          ${opList.map(o => {
-            const p = projectPoint(o.lng, o.lat); if (!p) return null;
-            // Guild color trumps rank color when allied
-            const color = o.guild?.color || rankFill[o.rank] || "#67e8f9";
-            // Larger baseline so zero-signal INITIATEs are still readable on the map.
-            const r = 12 + Math.min(18, o.signal_score * 2.2) + (o.rank === "SOVEREIGN" ? 8 : o.rank === "COMMANDER" ? 5 : o.rank === "ARCHITECT" ? 2 : 0);
-            const glyphSize = Math.max(14, r * 0.78);
-            return html`<a href=${`/u/${o.handle}`} key=${o.id} class="marker"
-                  onMouseEnter=${() => setTT({ op: o, x: p.x + 18, y: p.y - 8 })} onMouseLeave=${() => setTT(null)}
-                  onClick=${(e) => { e.preventDefault(); navigate(`/u/${o.handle}`); }}
-                  style=${`left:${p.x - r}px;top:${p.y - r}px;width:${r*2}px;height:${r*2}px;pointer-events:auto`}>
-              <span class="pulse" style=${`background:radial-gradient(circle, ${color}55 0%, transparent 65%);animation:pulse ${o.rank === "COMMANDER" || o.rank === "SOVEREIGN" ? "1.6s" : "2.4s"} infinite`}></span>
-              <span class="ring" style=${`border-color:${color}aa`}></span>
-              <span class="glyph" style=${`position:absolute;left:50%;top:50%;width:${glyphSize}px;height:${glyphSize}px;transform:translate(-50%,-50%);color:${color}`}>
-                <${RankGlyph} rank=${o.rank} />
-              </span>
-              <span class="label" style=${`color:${color}`}>@${o.handle}</span>
-            </a>`;
-          })}
+          ${(() => {
+            // Top-3 operators by signal_score always show their handle label (war-map leaderboard at a glance).
+            const topIds = new Set(opList.slice().sort((a,b) => (b.signal_score||0)-(a.signal_score||0)).slice(0,3).map(o => o.id));
+            return opList.map(o => {
+              const p = projectPoint(o.lng, o.lat); if (!p) return null;
+              const color = o.guild?.color || rankFill[o.rank] || "#67e8f9";
+              const r = 12 + Math.min(18, (o.signal_score||0) * 2.2) + (o.rank === "SOVEREIGN" ? 8 : o.rank === "COMMANDER" ? 5 : o.rank === "ARCHITECT" ? 2 : 0);
+              const glyphSize = Math.max(14, r * 0.78);
+              const persistent = topIds.has(o.id);
+              return html`<a href=${`/u/${o.handle}`} key=${o.id} class=${`marker ${persistent ? 'marker-top' : ''}`}
+                    onMouseEnter=${() => setTT({ op: o, x: p.x + 18, y: p.y - 8 })} onMouseLeave=${() => setTT(null)}
+                    onClick=${(e) => { e.preventDefault(); navigate(`/u/${o.handle}`); }}
+                    style=${`left:${p.x - r}px;top:${p.y - r}px;width:${r*2}px;height:${r*2}px;pointer-events:auto`}>
+                <span class="pulse" style=${`background:radial-gradient(circle, ${color}55 0%, transparent 65%);animation:pulse ${o.rank === "COMMANDER" || o.rank === "SOVEREIGN" ? "1.6s" : "2.4s"} infinite`}></span>
+                <span class="ring" style=${`border-color:${color}aa`}></span>
+                <span class="glyph" style=${`position:absolute;left:50%;top:50%;width:${glyphSize}px;height:${glyphSize}px;transform:translate(-50%,-50%);color:${color}`}>
+                  <${RankGlyph} rank=${o.rank} />
+                </span>
+                <span class="label" style=${`color:${color}`}>@${o.handle}${persistent ? html` · <span style="color:var(--mute);font-size:9px">S ${Number(o.signal_score||0).toFixed(1)}</span>` : ""}</span>
+              </a>`;
+            });
+          })()}
           ${pulses.map(p => { const proj = projectPoint(p.lng, p.lat); if (!proj) return null; const age = Date.now() - p.startedAt; const base = 60 + p.strength * 40;
             return [0,1,2].map(i => { const delay = i * 700; const off = age - delay; if (off < 0) return null;
               const t = Math.min(1, off / (6000 - delay)); const scale = 0.2 + t * 1.2; const opacity = (1 - t) * 0.85;

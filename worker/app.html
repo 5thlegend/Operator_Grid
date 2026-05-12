@@ -228,8 +228,10 @@ fieldset[disabled] { opacity:0.65; }
 .marker .pulse { position:absolute; inset:0; border-radius:50%; }
 .marker .core { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); border-radius:50%; }
 .marker .ring { position:absolute; inset:0; border-radius:50%; border:1px solid; opacity:.85; }
-.marker .label { position:absolute; left:50%; top:100%; margin-top:6px; transform:translateX(-50%); white-space:nowrap; font-family:var(--mono); font-size:10px; letter-spacing:2px; opacity:0; pointer-events:none; transition:.15s; }
+.marker .label { position:absolute; left:50%; top:100%; margin-top:6px; transform:translateX(-50%); white-space:nowrap; font-family:var(--mono); font-size:10px; letter-spacing:2px; opacity:0; pointer-events:none; transition:.15s; background:rgba(10,10,10,.65); padding:2px 6px; border-radius:1px; backdrop-filter:blur(2px); }
 .marker:hover .label { opacity:1; }
+/* Top-3 by signal — label always visible for war-map leaderboard feel */
+.marker.marker-top .label { opacity:1; text-shadow:0 0 8px currentColor; border:1px solid currentColor; background:rgba(10,10,10,.85); }
 
 .pulse-ring { position:absolute; pointer-events:none; border-radius:50%; border:1px solid; transform:translate(-50%,-50%); }
 .pulse-burst { position:absolute; pointer-events:none; left:0; top:0; width:12px; height:12px; margin-left:-6px; margin-top:-6px; border-radius:50%; }
