@@ -1822,6 +1822,33 @@ function GridList() {
 // ====================================================================
 // SIGNAL MAP
 // ====================================================================
+function SpotlightCard({ op, onClose }) {
+  const color = op.guild?.color || "#67e8f9";
+  const stats = [
+    { label: "Signal", value: Number(op.signal_score || 0).toFixed(1) },
+    { label: "Rank", value: op.rank || "INITIATE" },
+    { label: "XP", value: op.xp || 0 },
+    { label: "Momentum", value: op.momentum || 0 },
+    { label: "Streak", value: `${op.streak_days || 0}d` },
+    { label: "Followers", value: (op.followers||0).toLocaleString() },
+  ];
+  return html`<div class="spotlight-card" style=${`--g:${color}`}>
+    <div class="sc-head">
+      <span>// SPOTLIGHT · ${op.guild ? `ALLY · ${op.guild.sigil || "◈"} ${op.guild.name}` : "UNALLIED"}</span>
+      <button class="sc-close" onClick=${onClose} title="Release (ESC)">×</button>
+    </div>
+    <div class="sc-name">${op.display_name}</div>
+    <div class="sc-handle">@${op.handle}${op.city ? ` · ${op.city}${op.state ? ", " + op.state : ""}` : ""}</div>
+    <div class="sc-stats">
+      ${stats.map(s => html`<div key=${s.label}><span>${s.label}</span><span class="sv">${s.value}</span></div>`)}
+    </div>
+    <div class="sc-actions">
+      <${Link} href=${`/u/${op.handle}`} class="btn btn-glow" style="flex:1;justify-content:center">VIEW DOSSIER</${Link}>
+      <button class="btn" onClick=${onClose}>RELEASE</button>
+    </div>
+  </div>`;
+}
+
 function SignalMap() {
   const mapRef = useRef(null);
   const containerRef = useRef(null);
@@ -1832,24 +1859,55 @@ function SignalMap() {
   const [tt, setTT] = useState(null);
   const [asc, setAsc] = useState(null);
   const [ready, setReady] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);   // operator id under spotlight
 
-  // initial load
+  // ESC clears spotlight
   useEffect(() => {
-    if (!supaConfigured) return;
-    Promise.all([
-      supa.from("operators").select("id,handle,display_name,avatar_url,rank,xp,momentum,signal_score,followers,active_users,streak_days,city,state,lat,lng, guild_members(guild:guilds(id,slug,name,color,sigil))"),
-      supa.from("deployments").select("id,operator_id,kind,title,created_at,operator:operators!inner(handle,city)").order("created_at", { ascending: false }).limit(20),
-    ]).then(([o, f]) => {
-      const map = {};
-      (o.data || []).forEach(op => {
-        const fb = fallbackGeo(op.handle);
-        const m = (op.guild_members || [])[0];
-        map[op.id] = { ...op, lat: op.lat ?? fb.lat, lng: op.lng ?? fb.lng, signal_score: Number(op.signal_score||0), guild: m?.guild || null };
-        delete map[op.id].guild_members;
-      });
-      setOps(map);
-      setFeed((f.data || []).map(r => { const op = Array.isArray(r.operator) ? r.operator[0] : r.operator; return { kind: "deploy", id: r.id, handle: op.handle, title: r.title, deployKind: r.kind, at: new Date(r.created_at).getTime(), city: op?.city }; }));
-    });
+    if (!selected) return;
+    const onKey = (e) => { if (e.key === "Escape") setSelected(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected]);
+
+  // FlyTo selected operator
+  useEffect(() => {
+    const m = mapRef.current; if (!m || !ready) return;
+    if (selected) {
+      const o = ops[selected];
+      if (o?.lat != null && o?.lng != null) {
+        m.flyTo({ center: [o.lng, o.lat], zoom: 6, speed: 1.0, curve: 1.4, essential: true });
+      }
+    }
+  }, [selected, ready]);
+
+  // initial load — defensive, with loading flag so empty states don't flash
+  useEffect(() => {
+    if (!supaConfigured) { setLoading(false); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const [o, f] = await Promise.all([
+          supa.from("operators").select("id,handle,display_name,avatar_url,rank,xp,momentum,signal_score,followers,active_users,streak_days,city,state,lat,lng, guild_members(guild:guilds(id,slug,name,color,sigil))"),
+          supa.from("deployments").select("id,operator_id,kind,title,created_at,operator:operators!inner(handle,city)").order("created_at", { ascending: false }).limit(20),
+        ]);
+        if (cancelled) return;
+        const map = {};
+        (o.data || []).forEach(op => {
+          const fb = fallbackGeo(op.handle);
+          const m = (op.guild_members || [])[0];
+          map[op.id] = { ...op, lat: op.lat ?? fb.lat, lng: op.lng ?? fb.lng, signal_score: Number(op.signal_score||0), guild: m?.guild || null };
+          delete map[op.id].guild_members;
+        });
+        setOps(map);
+        setFeed((f.data || []).map(r => { const op = Array.isArray(r.operator) ? r.operator[0] : r.operator; return { kind: "deploy", id: r.id, handle: op.handle, title: r.title, deployKind: r.kind, at: new Date(r.created_at).getTime(), city: op?.city }; }));
+      } catch (e) {
+        console.error("[NRO:grid] initial fetch failed:", e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   // Mapbox setup
@@ -2032,13 +2090,38 @@ function SignalMap() {
     }
   }, [guildClusters, ready]);
 
+  // Spotlight: dim non-selected guild's territory + connection lines on the map
+  useEffect(() => {
+    const m = mapRef.current; if (!m || !ready) return;
+    const selectedOp = selected ? ops[selected] : null;
+    const selectedGuildId = selectedOp?.guild?.id || null;
+    const layers = ["guild-territory-fill", "guild-territory-line", "guild-connections-glow", "guild-connections-line"];
+    layers.forEach(id => {
+      if (!m.getLayer(id)) return;
+      if (!selected) {
+        m.setFilter(id, null);
+      } else if (selectedGuildId) {
+        m.setFilter(id, ["==", ["get", "id"], selectedGuildId]);
+      } else {
+        m.setFilter(id, ["==", ["get", "id"], "__none__"]);
+      }
+    });
+    // Lines use 'guild' property not 'id' — different filter for lines
+    ["guild-connections-glow", "guild-connections-line"].forEach(id => {
+      if (!m.getLayer(id)) return;
+      if (!selected) m.setFilter(id, null);
+      else if (selectedOp?.guild?.slug) m.setFilter(id, ["==", ["get", "guild"], selectedOp.guild.slug]);
+      else m.setFilter(id, ["==", ["get", "guild"], "__none__"]);
+    });
+  }, [selected, ready, ops]);
+
   function projectPoint(lng, lat) {
     const m = mapRef.current; if (!m) return null;
     return m.project([lng, lat]);
   }
 
   return html`
-    <div class="map-app">
+    <div class="map-app" data-spotlight=${selected ? "on" : "off"} onClick=${(e) => { if (e.target.classList?.contains("map-app") || e.target.id === "map") setSelected(null); }}>
       <div class="header">
         <${Link} href="/" style="display:flex;align-items:center;gap:10px"><span class="brand-mark">NRO</span><span class="brand-text">SIGNAL MAP · v0.1</span></${Link}>
         <span class="brand-text" style="opacity:.6">// SECTOR USA · CONTINENTAL</span>
@@ -2050,7 +2133,11 @@ function SignalMap() {
 
       <div class="feed">
         <div class="panel-head"><span class="lbl">// TACTICAL FEED</span><span class="hint" style="color:var(--glow)"><span class="dot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--glow);margin-right:4px;animation:pulse 1.6s infinite"></span>LIVE</span></div>
-        ${feed.length === 0 ? html`<div style="padding:24px 14px;font-family:var(--mono);font-size:10px;color:var(--mute)">// STANDING BY · NO SIGNALS</div>`
+        ${feed.length === 0 && !loading ? html`<div style="padding:32px 16px;display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center">
+            <div style="font-family:var(--mono);font-size:10px;color:var(--mute);letter-spacing:3px">// STANDING BY · NO SIGNALS</div>
+            <div style="font-family:var(--display);font-size:14px;color:var(--text);line-height:1.4">Be the first to fire.</div>
+            <${Link} href="/command/deploy" style="font-family:var(--mono);font-size:10px;letter-spacing:2px;color:var(--glow);border:1px solid var(--glow);padding:6px 12px;text-decoration:none">+ LOG DEPLOYMENT</${Link}>
+          </div>`
           : feed.map(it => html`<div style="padding:12px 14px;border-bottom:1px solid var(--line)" key=${it.id}>
               ${it.kind === "deploy" ? html`<div style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;letter-spacing:2px">
                 <span style="color:${KIND_COLOR[it.deployKind]}">[${it.deployKind.toUpperCase()}]</span><span style="margin-left:auto;color:var(--mute)">${relTime(it.at)}</span>
@@ -2066,6 +2153,10 @@ function SignalMap() {
 
       <div class="mapwrap">
         <div id="map"></div>
+        ${selected && ops[selected] ? html`<${SpotlightCard} op=${ops[selected]} onClose=${() => setSelected(null)}/>` : null}
+        ${loading ? html`<div style="position:absolute;inset:0;display:grid;place-items:center;z-index:7;background:rgba(10,10,10,.6);backdrop-filter:blur(4px);pointer-events:none">
+          <div style="text-align:center"><div style="font-family:var(--mono);font-size:11px;color:var(--glow);letter-spacing:4px"><span class="dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--glow);margin-right:8px;animation:pulse 1.6s infinite"></span>// SCANNING NETWORK…</div></div>
+        </div>` : null}
         ${guildClusters.length > 0 ? html`<div style="position:absolute;top:18px;left:50%;transform:translateX(-50%);z-index:6;display:flex;gap:10px;flex-wrap:wrap;justify-content:center;max-width:96%;pointer-events:auto">
           ${guildClusters.slice().sort((a,b) => b.members.reduce((s,m)=>s+(m.signal_score||0),0) - a.members.reduce((s,m)=>s+(m.signal_score||0),0)).map(c => {
             const totalSignal = c.members.reduce((s,m) => s + (m.signal_score || 0), 0);
@@ -2101,15 +2192,20 @@ function SignalMap() {
           ${(() => {
             // Top-3 operators by signal_score always show their handle label (war-map leaderboard at a glance).
             const topIds = new Set(opList.slice().sort((a,b) => (b.signal_score||0)-(a.signal_score||0)).slice(0,3).map(o => o.id));
+            const selectedOp = selected ? opList.find(o => o.id === selected) : null;
+            const selectedGuildId = selectedOp?.guild?.id || null;
             return opList.map(o => {
               const p = projectPoint(o.lng, o.lat); if (!p) return null;
               const color = o.guild?.color || rankFill[o.rank] || "#67e8f9";
               const r = 12 + Math.min(18, (o.signal_score||0) * 2.2) + (o.rank === "SOVEREIGN" ? 8 : o.rank === "COMMANDER" ? 5 : o.rank === "ARCHITECT" ? 2 : 0);
               const glyphSize = Math.max(14, r * 0.78);
               const persistent = topIds.has(o.id);
-              return html`<a href=${`/u/${o.handle}`} key=${o.id} class=${`marker ${persistent ? 'marker-top' : ''}`}
+              const isSelected = selected === o.id;
+              const isAlly = selectedGuildId && o.guild?.id === selectedGuildId && !isSelected;
+              const cls = `marker ${persistent ? 'marker-top' : ''} ${isSelected ? 'marker-selected' : ''} ${isAlly ? 'marker-ally' : ''}`;
+              return html`<a href=${`/u/${o.handle}`} key=${o.id} class=${cls}
                     onMouseEnter=${() => setTT({ op: o, x: p.x + 18, y: p.y - 8 })} onMouseLeave=${() => setTT(null)}
-                    onClick=${(e) => { e.preventDefault(); navigate(`/u/${o.handle}`); }}
+                    onClick=${(e) => { e.preventDefault(); e.stopPropagation(); setSelected(selected === o.id ? null : o.id); }}
                     style=${`left:${p.x - r}px;top:${p.y - r}px;width:${r*2}px;height:${r*2}px;pointer-events:auto`}>
                 <span class="pulse" style=${`background:radial-gradient(circle, ${color}55 0%, transparent 65%);animation:pulse ${o.rank === "COMMANDER" || o.rank === "SOVEREIGN" ? "1.6s" : "2.4s"} infinite`}></span>
                 <span class="ring" style=${`border-color:${color}aa`}></span>

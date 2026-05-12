@@ -233,6 +233,38 @@ fieldset[disabled] { opacity:0.65; }
 /* Top-3 by signal — label always visible for war-map leaderboard feel */
 .marker.marker-top .label { opacity:1; text-shadow:0 0 8px currentColor; border:1px solid currentColor; background:rgba(10,10,10,.85); }
 
+/* SPOTLIGHT MODE — when an operator is selected, dim everyone else */
+.map-app[data-spotlight="on"] .marker:not(.marker-selected):not(.marker-ally) {
+  opacity:0.22; filter:saturate(0.4) blur(0.5px); transition:.3s ease-out;
+}
+.map-app[data-spotlight="on"] .marker.marker-ally { opacity:0.85; transition:.3s; }
+.map-app[data-spotlight="on"] .marker.marker-selected {
+  z-index:5; opacity:1; transition:.3s;
+}
+.map-app[data-spotlight="on"] .marker.marker-selected .pulse { animation-duration:1s; opacity:1; }
+.map-app[data-spotlight="on"] .marker.marker-selected .ring { border-width:2px; }
+.map-app[data-spotlight="on"] .marker.marker-selected .label { opacity:1; }
+
+.spotlight-card {
+  position:absolute; top:20px; right:20px; z-index:9;
+  width:300px; padding:16px;
+  background:rgba(10,10,10,.95); backdrop-filter:blur(12px);
+  border:1px solid var(--g, var(--glow));
+  box-shadow:0 0 64px -12px color-mix(in srgb, var(--g, var(--glow)) 60%, transparent),
+             inset 0 0 28px -8px color-mix(in srgb, var(--g, var(--glow)) 30%, transparent);
+  animation: spotlight-in .25s ease-out;
+}
+@keyframes spotlight-in { from { transform:translateX(20px); opacity:0; } to { transform:none; opacity:1; } }
+.spotlight-card .sc-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; font-family:var(--mono); font-size:10px; color:var(--g, var(--glow)); letter-spacing:3px; }
+.spotlight-card .sc-close { background:transparent; border:1px solid var(--line2); color:var(--mute); width:24px; height:24px; cursor:pointer; line-height:0; font-size:14px; padding:0; }
+.spotlight-card .sc-close:hover { color:var(--text); border-color:var(--text); }
+.spotlight-card .sc-name { font-family:var(--display); font-size:22px; font-weight:700; line-height:1.1; }
+.spotlight-card .sc-handle { font-family:var(--mono); font-size:11px; color:var(--mute); margin-top:2px; }
+.spotlight-card .sc-stats { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:14px; font-family:var(--mono); font-size:10px; }
+.spotlight-card .sc-stats > div { display:flex; justify-content:space-between; padding:6px 8px; background:rgba(0,0,0,.4); border:1px solid var(--line2); }
+.spotlight-card .sc-stats .sv { color:var(--g, var(--glow)); font-weight:600; }
+.spotlight-card .sc-actions { margin-top:12px; display:flex; gap:8px; }
+
 .pulse-ring { position:absolute; pointer-events:none; border-radius:50%; border:1px solid; transform:translate(-50%,-50%); }
 .pulse-burst { position:absolute; pointer-events:none; left:0; top:0; width:12px; height:12px; margin-left:-6px; margin-top:-6px; border-radius:50%; }
 
