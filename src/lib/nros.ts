@@ -38,15 +38,35 @@ async function nrosFetch(path: string, body: unknown): Promise<void> {
   }
 }
 
+/** Civilization event names — DIVINE-SYNC v2 vocabulary (dotted namespace). */
+export type CivilizationEventName =
+  | "deployment.iteration"
+  | "deployment.ship"
+  | "deployment.milestone"
+  | "deployment.launch"
+  | "operator.ascension"
+  | "operator.activation"
+  | "realm.attach"
+  | "realm.vault"
+  | "guild.create"
+  | "guild.merge"
+  | "mission.complete"
+  | "mission.fail"
+  | "influence.growth"
+  | "economy.transaction"
+  | "agent.deploy"
+  | "agent.fault"
+  | "achievement.unlock"
+  | (string & {}); // realms may emit unknown event_names
+
 export async function pushTransmission(input: {
+  /** Coarse bucket — one of the canonical kinds. */
   kind:
-    | "OPERATOR_JOINED"
-    | "XP_AWARDED"
-    | "RANK_CHANGED"
-    | "ACHIEVEMENT_UNLOCKED"
-    | "MISSION_COMPLETED"
-    | "WORKFLOW_FORGED"
-    | "CUSTOM";
+    | "OPERATOR_JOINED" | "XP_AWARDED" | "RANK_CHANGED"
+    | "ACHIEVEMENT_UNLOCKED" | "MISSION_COMPLETED" | "WORKFLOW_FORGED"
+    | "REALM_REGISTERED" | "SYSTEM" | "CUSTOM";
+  /** Structured dotted-namespace event name (e.g. 'deployment.launch'). */
+  event_name?: CivilizationEventName;
   title: string;
   body?: string;
   callsign?: string;
@@ -95,6 +115,7 @@ export async function pushDeploymentEvent(input: {
     }),
     pushTransmission({
       kind: txKind[input.kind],
+      event_name: `deployment.${input.kind}`,
       title: `${input.callsign} ${input.kind === "launch" ? "launched" : input.kind === "milestone" ? "hit milestone" : input.kind === "ship" ? "shipped" : "iterated"}: ${input.title}`,
       callsign: input.callsign,
       metadata: { kind: input.kind, deployment_id: input.deploymentId, url: input.url ?? null },
