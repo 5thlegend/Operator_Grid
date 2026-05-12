@@ -136,8 +136,14 @@ const auth = {
 };
 async function loadOperator(userId) {
   if (!supaConfigured || !userId) return null;
-  const { data } = await supa.from("operators").select("*").eq("id", userId).maybeSingle();
-  return data;
+  try {
+    const { data, error } = await supa.from("operators").select("*").eq("id", userId).maybeSingle();
+    if (error) { console.warn("loadOperator:", error.message); return null; }
+    return data;
+  } catch (e) {
+    console.warn("loadOperator threw:", e?.message || e);
+    return null;
+  }
 }
 async function bootAuth() {
   if (!supaConfigured) { auth.set({ loading: false }); return; }
@@ -405,13 +411,16 @@ function Onboarding() {
       if (geo) { lat = geo.lat; lng = geo.lng; }
     }
     if (lat == null) { const fb = fallbackGeo(handle); lat = fb.lat; lng = fb.lng; }
-    const { error } = await supa.from("operators").insert({
+    const row = {
       id: a.user.id, handle: handle.toLowerCase(), display_name: name.trim().slice(0, 48) || handle,
       tagline: tagline.trim().slice(0, 120) || null, city: city.trim() || null, state: state.trim().toUpperCase() || null,
       lat, lng,
-    });
+    };
+    const { error } = await supa.from("operators").insert(row);
     if (error) { setErr(error.message); setBusy(false); return; }
-    auth.set({ operator: await loadOperator(a.user.id) });
+    // Optimistic local state so the redirect doesn't bounce through onboarding again.
+    auth.set({ operator: { ...row, rank: "INITIATE", xp: 0, momentum: 0, signal_score: 0, streak_days: 0, followers: 0, active_users: 0, created_at: new Date().toISOString() } });
+    loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); });
     navigate("/command");
   }
   if (a.loading || !a.user) return html`<${Nav} /><main class="container center"><span class="tag">// INITIALIZING…</span></main>`;
@@ -609,7 +618,8 @@ function Deploy() {
     e.preventDefault(); setBusy(true); setErr(null);
     const { data, error } = await supa.from("deployments").insert({ operator_id: a.user.id, kind, title: title.trim(), description: desc.trim() || null, url: url.trim() || null }).select("id").single();
     if (error) { setErr(error.message); setBusy(false); return; }
-    auth.set({ operator: await loadOperator(a.user.id) });
+    // Refresh operator stats in background, navigate immediately so user sees their deployment.
+    loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); });
     navigate(`/u/${a.operator.handle}/d/${data.id}`);
   }
   if (!a.operator) return html`<${Nav} /><main class="container center"><span class="tag">// LOADING…</span></main>`;
@@ -680,7 +690,7 @@ function Profile() {
       const geo = await geocodeUS([newCity, newState].filter(Boolean).join(", "));
       if (geo) { lat = geo.lat; lng = geo.lng; }
     } else if (!newCity) { lat = null; lng = null; }
-    const { error } = await supa.from("operators").update({
+    const updated = {
       display_name: name.trim().slice(0, 48),
       tagline: tagline.trim().slice(0, 120) || null,
       bio: bio.trim().slice(0, 600) || null,
@@ -691,11 +701,16 @@ function Profile() {
       link_x: linkX.trim().slice(0, 60) || null,
       link_github: linkGh.trim().slice(0, 60) || null,
       current_project: current.trim().slice(0, 60) || null,
-    }).eq("id", a.user.id);
+    };
+    const { error } = await supa.from("operators").update(updated).eq("id", a.user.id);
     setBusy(false);
     if (error) { setMsg({ type: "err", text: error.message.toUpperCase() }); return; }
-    auth.set({ operator: await loadOperator(a.user.id) });
-    setMsg({ type: "ok", text: "DOSSIER UPDATED." });
+    // Update local auth state by merging — DON'T nuke it if reload fails.
+    auth.set({ operator: { ...op, ...updated } });
+    // Best-effort refresh from server, but tolerate null.
+    loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); });
+    setMsg({ type: "ok", text: "DOSSIER UPDATED · RETURNING TO COMMAND…" });
+    setTimeout(() => navigate("/command"), 900);
   }
   if (!op) return html`<${Nav} /><main class="container center"><span class="tag">// LOADING…</span></main>`;
   return html`
