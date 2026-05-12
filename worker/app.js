@@ -97,19 +97,37 @@ function withTimeout(promise, ms, label = "operation") {
 // Direct fetch to Supabase REST — bypasses the supa client's query builder
 // which can have edge cases with timeout wrappers. Uses the live access
 // token from the auth session. Returns {ok, error, data}.
-async function authToken() {
-  let token = ENV.SUPABASE_ANON_KEY;
+async function authToken({ refreshIfNeeded = true } = {}) {
+  let token = null;
   try {
-    const { data: { session } } = await supa.auth.getSession();
+    let { data: { session } } = await supa.auth.getSession();
+    // If session is missing or near-expiry (<60s left), refresh proactively.
+    if (refreshIfNeeded) {
+      const expiresAt = session?.expires_at || 0;
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (!session?.access_token || (expiresAt && expiresAt - nowSec < 60)) {
+        try {
+          const { data, error } = await supa.auth.refreshSession();
+          if (error) console.warn("[NRO:authToken] refresh failed:", error.message);
+          session = data?.session || session;
+        } catch (e) {
+          console.warn("[NRO:authToken] refresh threw:", e?.message);
+        }
+      }
+    }
     if (session?.access_token) token = session.access_token;
   } catch (e) {
-    console.warn("[NRO:authToken] using anon fallback:", e?.message);
+    console.warn("[NRO:authToken] getSession threw:", e?.message);
   }
-  return token;
+  // Anon fallback only for unauthed reads — write callers should detect null token and surface.
+  return token || ENV.SUPABASE_ANON_KEY;
 }
-async function supaRest({ method, path, body, signal, prefer }) {
-  if (!supaConfigured) return { ok: false, error: "supabase not configured" };
+async function supaRest({ method, path, body, signal, prefer, requireAuth = false }) {
+  if (!supaConfigured) return { ok: false, error: "Supabase not configured." };
   const token = await authToken();
+  if (requireAuth && (!token || token === ENV.SUPABASE_ANON_KEY)) {
+    return { ok: false, error: "SESSION EXPIRED · sign out and back in." };
+  }
   const res = await fetch(`${ENV.SUPABASE_URL}/rest/v1/${path}`, {
     method,
     headers: {
@@ -124,6 +142,10 @@ async function supaRest({ method, path, body, signal, prefer }) {
   if (!res.ok) {
     let detail = "";
     try { const j = await res.json(); detail = j.message || j.hint || j.error || JSON.stringify(j).slice(0, 240); } catch {}
+    // Friendly RLS hint
+    if (res.status === 401 || (typeof detail === "string" && detail.toLowerCase().includes("row-level security"))) {
+      return { ok: false, error: `Auth refused · ${detail || "session may have expired"}` };
+    }
     return { ok: false, error: `HTTP ${res.status}${detail ? " — " + detail : ""}` };
   }
   let data = null;
@@ -131,13 +153,13 @@ async function supaRest({ method, path, body, signal, prefer }) {
   return { ok: true, data };
 }
 async function patchOperator(updated, userId, signal) {
-  return supaRest({ method: "PATCH", path: `operators?id=eq.${encodeURIComponent(userId)}`, body: updated, signal });
+  return supaRest({ method: "PATCH", path: `operators?id=eq.${encodeURIComponent(userId)}`, body: updated, signal, requireAuth: true });
 }
 async function insertOperator(row, signal) {
-  return supaRest({ method: "POST", path: "operators", body: row, signal });
+  return supaRest({ method: "POST", path: "operators", body: row, signal, requireAuth: true });
 }
 async function insertDeployment(row, signal) {
-  return supaRest({ method: "POST", path: "deployments?select=id", body: row, signal });
+  return supaRest({ method: "POST", path: "deployments?select=id", body: row, signal, requireAuth: true });
 }
 
 // ====================================================================
@@ -181,16 +203,16 @@ const TX = {
   }),
 };
 async function insertGuild(row, signal) {
-  return supaRest({ method: "POST", path: "guilds", body: row, signal });
+  return supaRest({ method: "POST", path: "guilds", body: row, signal, requireAuth: true });
 }
 async function patchGuild(updated, guildId, signal) {
-  return supaRest({ method: "PATCH", path: `guilds?id=eq.${encodeURIComponent(guildId)}`, body: updated, signal });
+  return supaRest({ method: "PATCH", path: `guilds?id=eq.${encodeURIComponent(guildId)}`, body: updated, signal, requireAuth: true });
 }
 async function joinGuild(guildId, userId, role, signal) {
-  return supaRest({ method: "POST", path: "guild_members", body: { guild_id: guildId, operator_id: userId, role: role || "member" }, signal });
+  return supaRest({ method: "POST", path: "guild_members", body: { guild_id: guildId, operator_id: userId, role: role || "member" }, signal, requireAuth: true });
 }
 async function leaveGuild(userId, signal) {
-  return supaRest({ method: "DELETE", path: `guild_members?operator_id=eq.${encodeURIComponent(userId)}`, body: undefined, signal, prefer: "return=minimal" });
+  return supaRest({ method: "DELETE", path: `guild_members?operator_id=eq.${encodeURIComponent(userId)}`, body: undefined, signal, prefer: "return=minimal", requireAuth: true });
 }
 
 // ====================================================================
@@ -1625,7 +1647,8 @@ function SignalMap() {
             const p = projectPoint(o.lng, o.lat); if (!p) return null;
             // Guild color trumps rank color when allied
             const color = o.guild?.color || rankFill[o.rank] || "#67e8f9";
-            const r = 6 + Math.min(20, o.signal_score * 2.5) + (o.rank === "SOVEREIGN" ? 8 : o.rank === "COMMANDER" ? 5 : o.rank === "ARCHITECT" ? 2 : 0);
+            // Larger baseline so zero-signal INITIATEs are still readable on the map.
+            const r = 12 + Math.min(18, o.signal_score * 2.2) + (o.rank === "SOVEREIGN" ? 8 : o.rank === "COMMANDER" ? 5 : o.rank === "ARCHITECT" ? 2 : 0);
             return html`<a href=${`/u/${o.handle}`} key=${o.id} class="marker"
                   onMouseEnter=${() => setTT({ op: o, x: p.x + 18, y: p.y - 8 })} onMouseLeave=${() => setTT(null)}
                   onClick=${(e) => { e.preventDefault(); navigate(`/u/${o.handle}`); }}
