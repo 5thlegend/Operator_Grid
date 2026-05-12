@@ -195,7 +195,21 @@ fieldset[disabled] { opacity:0.65; }
 .map-app .telemetry { grid-column:1/-1; display:flex; align-items:center; gap:20px; padding:0 18px; background:rgba(10,10,10,.85); border-top:1px solid var(--line); font-family:var(--mono); font-size:10px; letter-spacing:2px; color:var(--dim); }
 .map-app .telemetry .glow { color:var(--glow); }
 .map-app .panel-head { padding:8px 14px; }
-@media (max-width:1024px) { .map-app { grid-template-columns:1fr; grid-template-rows:48px 200px 1fr 36px; } .map-app .feed { grid-row:2; grid-column:1; border-right:0; border-bottom:1px solid var(--line); } .map-app .mapwrap { grid-row:3; grid-column:1; } .map-app .ranks { display:none; } }
+@media (max-width:1024px) { .map-app { grid-template-columns:1fr; grid-template-rows:48px 180px 1fr 36px; } .map-app .feed { grid-row:2; grid-column:1; border-right:0; border-bottom:1px solid var(--line); } .map-app .mapwrap { grid-row:3; grid-column:1; } .map-app .ranks { display:none; } }
+@media (max-width:640px) {
+  .map-app .telemetry { font-size:9px; gap:10px; padding:0 10px; overflow-x:auto; }
+  .map-app .header { gap:8px; padding:0 12px; flex-wrap:wrap; }
+  .map-app .header > a:not(.brand-mark) { font-size:9px; }
+  .faction-chip { min-height:44px; }
+  .faction-chip .fc-sigil { width:42px; min-width:42px; font-size:20px; }
+  .faction-chip .fc-name { font-size:12px; }
+  .faction-chip .fc-stats { font-size:9px; }
+  /* Wall of Work — one column on phones */
+  .work-card .stats > div { padding:6px 8px; }
+  .work-card h3 { font-size:15px; }
+  /* Hero typography down a notch */
+  .hero h1 { font-size:clamp(40px, 11vw, 60px); letter-spacing:-1px; }
+}
 
 #map { position:absolute; inset:0; }
 .map-app .mapwrap::after { content:""; position:absolute; inset:0; pointer-events:none;

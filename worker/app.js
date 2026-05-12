@@ -209,6 +209,14 @@ const TX = {
     operator_callsign: op.handle,
     metadata: { event: "GUILD_FORGED", guild_id: g.id, guild_slug: g.slug, sigil: g.sigil, color: g.color },
   }),
+  // Federation hook #5 — fired when an operator accepts a mission delivered
+  // by NROS. Mission consumer is stubbed until NROS_API_KEY is set.
+  missionAccepted: (op, mission) => ({
+    kind: "CUSTOM", realm_slug: "operator-grid",
+    title: `${op.display_name || op.handle} accepted "${mission.title}"`,
+    operator_callsign: op.handle,
+    metadata: { event: "MISSION_ACCEPTED", mission_id: mission.id, xp_reward: mission.xp_reward, difficulty: mission.difficulty },
+  }),
 };
 async function insertGuild(row, signal) {
   return supaRest({ method: "POST", path: "guilds", body: row, signal, requireAuth: true });
@@ -1872,11 +1880,6 @@ function SignalMap() {
       });
     }
   }, [guildClusters, ready]);
-
-  function projectPoint_(lng, lat) {
-    const m = mapRef.current; if (!m) return null;
-    return m.project([lng, lat]);
-  }
 
   function projectPoint(lng, lat) {
     const m = mapRef.current; if (!m) return null;
