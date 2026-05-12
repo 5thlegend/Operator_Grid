@@ -1051,6 +1051,7 @@ function AICoach({ op, deps, daysSinceLast }) {
   const [text, setText] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const firstTime = (deps || []).length === 0 && (op.xp || 0) === 0;
   async function fetchAdvice() {
     setBusy(true); setErr(null); setText(null);
     const last = deps?.[0];
@@ -1073,8 +1074,15 @@ function AICoach({ op, deps, daysSinceLast }) {
       setErr(String(e?.message || e).toUpperCase());
     } finally { setBusy(false); }
   }
-  // auto-fire once per mount so the deck always greets with intel
-  useEffect(() => { fetchAdvice(); }, []);
+  // First-time operators get a deterministic onboarding briefing instead
+  // of an AI call (model would hallucinate intel on a zero-data profile).
+  useEffect(() => {
+    if (firstTime) {
+      setText(`Welcome to the Grid, @${op.handle}. Your dossier is live and broadcasting on signal score 0.0.\nLog your first deployment to stamp the record — iteration takes 10 seconds and earns 10 XP.`);
+      return;
+    }
+    fetchAdvice();
+  }, []);
   const lines = (text || "").split("\n").map(s => s.trim()).filter(Boolean);
   return html`<${Panel} corners=${true} style="margin-top:24px">
     <div class="panel-head"><span class="lbl">// TACTICAL ADVISOR · AI</span><button onClick=${fetchAdvice} disabled=${busy} class="btn" style="padding:4px 10px;font-size:10px">${busy ? "QUERYING…" : "RE-QUERY"}</button></div>
@@ -1632,9 +1640,22 @@ function Dossier({ handle, deploymentId }) {
         </div>
       </${Panel}>` : null}
 
+      ${projects.length === 0 && a.user?.id === op.id ? html`<${Panel} style="margin-top:24px">
+        <div class="panel-head"><span class="lbl">// WALL OF WORK</span><span class="hint">EMPTY</span></div>
+        <div style="padding:36px 20px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:14px">
+          <div style="font-family:var(--display);font-size:20px;color:var(--text)">Stack what you've shipped.</div>
+          <div style="color:var(--dim);font-size:13px;max-width:48ch;line-height:1.55">Every product you've launched, white-labeled, or sold lifetime belongs here. Tracked revenue feeds your Signal Score and lights up your dossier for cold visitors.</div>
+          <${Link} href="/command/projects" class="btn btn-primary">+ ADD FIRST PROJECT</${Link}>
+        </div>
+      </${Panel}>` : null}
+
       <${Panel} style="margin-top:24px">
         <div class="panel-head"><span class="lbl">// DEPLOYMENT LOG</span><span class="hint">${deps.length} TOTAL</span></div>
-        ${deps.length === 0 ? html`<div style="padding:48px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--mute)">NO DEPLOYMENTS LOGGED.</div>`
+        ${deps.length === 0 ? html`<div style="padding:36px 20px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:14px">
+            <div style="font-family:var(--display);font-size:20px;color:var(--text)">${a.user?.id === op.id ? "Stamp the record." : "Awaiting first signal."}</div>
+            <div style="color:var(--dim);font-size:13px;max-width:48ch;line-height:1.55">${a.user?.id === op.id ? "Every iteration, ship, milestone, or launch becomes a public permalink. First one earns 10 XP minimum and starts your streak." : `@${op.handle} hasn't logged a deployment yet. When they do, it'll appear here as a permalink with a HUD share card.`}</div>
+            ${a.user?.id === op.id ? html`<${Link} href="/command/deploy" class="btn btn-primary">+ LOG FIRST DEPLOYMENT</${Link}>` : null}
+          </div>`
           : deps.map(d => html`<${Link} href=${`/u/${op.handle}/d/${d.id}`} class="feed-item" style="display:block">
               <div style="display:flex;align-items:start;gap:14px"><div style="width:96px"><${KindBadge} kind=${d.kind} /></div>
                 <div style="flex:1"><div style="font-family:var(--display);font-size:16px">${d.title}</div>
