@@ -422,6 +422,59 @@ window.__NRO_ENV = {
   MAPBOX_TOKEN: "__MAPBOX_TOKEN__",
   SITE_URL: "__SITE_URL__"
 };
+
+// Boot watchdog (P0-3): if the SPA hasn't mounted in 9s, swap the loader
+// for a recovery UI so users aren't trapped on a spinner.
+// Common causes: esm.sh CDN slow, Mapbox blocked, Supabase init throwing.
+window.__NRO_BOOT_WATCHDOG = setTimeout(function() {
+  var boot = document.getElementById("boot");
+  if (!boot) return;
+  boot.innerHTML =
+    '<div style="max-width:540px;text-align:center;padding:24px;font-family:Inter,sans-serif">' +
+      '<div style="font-family:\'JetBrains Mono\',monospace;font-size:11px;color:#fbbf24;letter-spacing:4px">// SIGNAL DEGRADED</div>' +
+      '<h2 style="font-family:\'Space Grotesk\',sans-serif;font-size:24px;margin:14px 0 6px;color:#e6e6ea">Operator Core is taking longer than expected.</h2>' +
+      '<p style="color:#9a9aa3;font-size:14px;margin:0 0 20px">A third-party module (Mapbox, Supabase, or the esm.sh CDN) may be slow on your network. Try a refresh, or jump to the federation while we sort it out.</p>' +
+      '<div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">' +
+        '<button onclick="location.reload()" style="background:#67e8f9;color:#0a0a0a;border:0;padding:10px 18px;font-family:\'JetBrains Mono\',monospace;font-size:11px;letter-spacing:3px;cursor:pointer">RETRY</button>' +
+        '<a href="https://nextrealmos.pages.dev/civilization" style="display:inline-block;background:transparent;color:#e6e6ea;border:1px solid #34343e;padding:10px 18px;font-family:\'JetBrains Mono\',monospace;font-size:11px;letter-spacing:3px;text-decoration:none">NROS · CIVILIZATION →</a>' +
+      '</div>' +
+    '</div>';
+}, 9000);
+
+// Cancel the watchdog when the SPA mounts (it removes the boot div).
+new MutationObserver(function(muts, obs) {
+  for (var i = 0; i < muts.length; i++) {
+    var m = muts[i];
+    for (var j = 0; j < m.removedNodes.length; j++) {
+      if (m.removedNodes[j].id === "boot") {
+        clearTimeout(window.__NRO_BOOT_WATCHDOG);
+        obs.disconnect();
+        return;
+      }
+    }
+  }
+}).observe(document.getElementById("app"), { childList: true });
+
+// Surface module-load errors instantly instead of waiting for the watchdog.
+window.addEventListener("error", function(e) {
+  if (e.filename && /esm\.sh|mapbox|supabase/.test(e.filename)) {
+    var boot = document.getElementById("boot");
+    if (boot && !boot.dataset.errored) {
+      boot.dataset.errored = "1";
+      clearTimeout(window.__NRO_BOOT_WATCHDOG);
+      boot.innerHTML =
+        '<div style="max-width:520px;text-align:center;padding:24px;font-family:Inter,sans-serif">' +
+          '<div style="font-family:\'JetBrains Mono\',monospace;font-size:11px;color:#f87171;letter-spacing:4px">// MODULE LOAD FAILED</div>' +
+          '<h2 style="font-family:\'Space Grotesk\',sans-serif;font-size:22px;margin:14px 0 6px;color:#e6e6ea">A dependency couldn\'t load.</h2>' +
+          '<p style="color:#9a9aa3;font-size:13px;margin:0 0 20px">' + (e.filename || "unknown") + '<br><small>' + (e.message || "") + '</small></p>' +
+          '<div style="display:flex;gap:10px;justify-content:center">' +
+            '<button onclick="location.reload()" style="background:#67e8f9;color:#0a0a0a;border:0;padding:10px 18px;font-family:\'JetBrains Mono\',monospace;font-size:11px;letter-spacing:3px;cursor:pointer">RETRY</button>' +
+            '<a href="https://nextrealmos.pages.dev/civilization" style="background:transparent;color:#e6e6ea;border:1px solid #34343e;padding:10px 18px;font-family:\'JetBrains Mono\',monospace;font-size:11px;letter-spacing:3px;text-decoration:none">NROS →</a>' +
+          '</div>' +
+        '</div>';
+    }
+  }
+}, true);
 </script>
 <script type="module" src="/app.js"></script>
 </body></html>

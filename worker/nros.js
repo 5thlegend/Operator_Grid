@@ -6,6 +6,17 @@
 // Activated when env.NROS_API_KEY + env.NROS_BASE_URL are both set as
 // Worker secrets. When inactive, every call is a silent no-op so the
 // rest of the app keeps working in standalone mode.
+//
+// V3.4 (audit fixes):
+//   - Endpoints corrected from /api/v1/federation/... → /api/federation/...
+//     (NROS V3 dropped the v1 namespace; the alias still works but we
+//     prefer the canonical path).
+//   - Field name corrected from `operator_callsign` → `callsign` so
+//     NROS resolves the operator UUID server-side.
+//   - Removed `realm_slug` (NROS infers realm from the bearer key).
+//   - Each event helper now sets a dotted `event_name` so the V3 event
+//     vocabulary is honored and surfaces (Realm Graph, ticker, achievements)
+//     render the right glyph + animation.
 
 export function makeNros(env) {
   const apiKey = env.NROS_API_KEY;
@@ -19,26 +30,26 @@ export function makeNros(env) {
       // Fire-and-forget broadcast of an event into the NROS federation feed.
       async push(payload) {
         if (!enabled) return { skipped: true };
-        return fetcher("/api/v1/federation/transmissions", "POST", payload);
+        return fetcher("/api/federation/transmissions", "POST", payload);
       },
     },
     operators: {
       // Look up the canonical NROS operator by callsign.
       async lookup(callsign) {
         if (!enabled) return null;
-        return fetcher(`/api/v1/federation/operators/${encodeURIComponent(callsign)}`, "GET");
+        return fetcher(`/api/federation/operators/${encodeURIComponent(callsign)}`, "GET");
       },
       // Upsert an operator into NROS — used on first NRO signup to mirror identity.
       async upsert(payload) {
         if (!enabled) return { skipped: true };
-        return fetcher("/api/v1/federation/operators", "POST", payload);
+        return fetcher("/api/federation/operators", "POST", payload);
       },
     },
     xp: {
       // Award canonical XP back to NROS so leaderboards stay unified.
       async award(payload) {
         if (!enabled) return { skipped: true };
-        return fetcher("/api/v1/federation/xp", "POST", payload);
+        return fetcher("/api/federation/xp", "POST", payload);
       },
     },
   };
@@ -73,15 +84,20 @@ async function safeText(res) {
 
 // Event-shape helpers — match @nros/sdk's `TransmissionKind` literals
 // so calls translate 1:1 when we switch to the real SDK.
+
 export function deploymentTransmission(op, deployment) {
+  const kind = (deployment.kind || "ship").toLowerCase(); // "iteration" | "ship" | "milestone" | "launch"
+  const txKind = kind === "launch"    ? "WORKFLOW_FORGED"
+              : kind === "milestone" ? "MISSION_COMPLETED"
+              : "CUSTOM";
   return {
-    kind: "MISSION_COMPLETED",
-    realm_slug: "operator-grid",
-    title: `${(deployment.kind || "deploy").toUpperCase()} · ${deployment.title}`,
-    operator_callsign: op.handle,
+    kind: txKind,
+    event_name: `deployment.${kind}`,
+    title: `${kind.toUpperCase()} · ${deployment.title}`,
+    callsign: op.handle,
     metadata: {
       deployment_id: deployment.id,
-      kind: deployment.kind,
+      kind,
       xp_awarded: deployment.xp_awarded,
       url: deployment.url || null,
       signal_score_after: op.signal_score,
@@ -94,9 +110,9 @@ export function deploymentTransmission(op, deployment) {
 export function rankTransmission(op, fromRank, toRank) {
   return {
     kind: "RANK_CHANGED",
-    realm_slug: "operator-grid",
+    event_name: "operator.ascension",
     title: `${op.display_name || op.handle} ascended to ${toRank}`,
-    operator_callsign: op.handle,
+    callsign: op.handle,
     metadata: { from_rank: fromRank, to_rank: toRank, at_xp: op.xp },
   };
 }
@@ -104,11 +120,10 @@ export function rankTransmission(op, fromRank, toRank) {
 export function guildForgedTransmission(op, guild) {
   return {
     kind: "CUSTOM",
-    realm_slug: "operator-grid",
+    event_name: "guild.create",
     title: `${op.display_name || op.handle} forged guild ${guild.sigil || "◈"} ${guild.name}`,
-    operator_callsign: op.handle,
+    callsign: op.handle,
     metadata: {
-      event: "GUILD_FORGED",
       guild_id: guild.id,
       guild_slug: guild.slug,
       sigil: guild.sigil,
@@ -120,9 +135,9 @@ export function guildForgedTransmission(op, guild) {
 export function onboardingTransmission(op) {
   return {
     kind: "OPERATOR_JOINED",
-    realm_slug: "operator-grid",
+    event_name: "operator.activation",
     title: `${op.display_name} enlisted as @${op.handle}`,
-    operator_callsign: op.handle,
+    callsign: op.handle,
     metadata: {
       city: op.city || null,
       state: op.state || null,
