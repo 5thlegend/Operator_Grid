@@ -1,6 +1,10 @@
 // NRO Operator Core — single-Worker SPA.
 // Serves the cinematic app HTML with env vars injected at runtime.
 // Run alongside Supabase + Mapbox for full functionality.
+// When NROS_API_KEY + NROS_BASE_URL secrets are set, also acts as a
+// federation realm and broadcasts events to nextrealmos.pages.dev.
+
+__NROS_MODULE__
 
 const RAW_HTML = __APP_HTML__;
 const RAW_JS = __APP_JS__;
@@ -35,6 +39,14 @@ export default {
     // AI Deployment Assessment — per-deployment tactical critique.
     if (path === "/api/ai/assess" && request.method === "POST") {
       return aiAssess(request, env);
+    }
+
+    // NROS federation hooks — called by the SPA after writes to broadcast to nextrealmos.pages.dev.
+    if (path === "/api/nros/broadcast" && request.method === "POST") {
+      return nrosBroadcast(request, env);
+    }
+    if (path === "/api/nros/status" && request.method === "GET") {
+      return jsonResponse({ enabled: !!env.NROS_API_KEY, base_url: env.NROS_BASE_URL || null });
     }
 
     // app bundle
@@ -493,6 +505,17 @@ Assess.`;
   } catch (e) {
     return jsonResponse({ error: String(e?.message || e) }, 500);
   }
+}
+
+// NROS federation broadcast endpoint. The SPA calls this fire-and-forget
+// after a write succeeds; the Worker holds the API key + signs the request.
+async function nrosBroadcast(request, env) {
+  if (!env.NROS_API_KEY) return jsonResponse({ skipped: true, reason: "NROS_API_KEY not set" });
+  let body = {};
+  try { body = await request.json(); } catch {}
+  const nros = makeNros(env);
+  const out = await nros.transmissions.push(body);
+  return jsonResponse(out);
 }
 
 // Strip prefixes/labels the model occasionally leaks, plus surrounding quotes.

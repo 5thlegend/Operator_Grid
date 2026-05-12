@@ -11,11 +11,19 @@ function read(p) { return fs.readFileSync(path.join(projectRoot, p), "utf8"); }
 const html = read("worker/app.html");
 const js = read("worker/app.js");
 const worker = read("worker/worker.js");
+let nrosSrc = read("worker/nros.js");
 
 // inline as backtick-safe strings
 function quote(s) { return JSON.stringify(s); }
 
+// Strip the `export` keywords from the federation module so it inlines as
+// regular declarations inside worker.js.
+nrosSrc = nrosSrc
+  .replace(/^export\s+function\s+/gm, "function ")
+  .replace(/^export\s+default\s+/gm, "");
+
 const bundled = worker
+  .replace("__NROS_MODULE__", `// ---- inlined from worker/nros.js ----\n${nrosSrc}\n// ---- end nros.js ----`)
   .replace("__APP_HTML__", quote(html))
   .replace("__APP_JS__", quote(js));
 
