@@ -84,12 +84,60 @@ async function geocodeUS(query) {
   }
 }
 
-// Generic timeout wrapper for any promise
+// Generic timeout wrapper for any promise. Force into a real Promise first so
+// thenables (Supabase query builders) get a proper Promise wrapper.
 function withTimeout(promise, ms, label = "operation") {
+  const p = Promise.resolve().then(() => promise);
   return Promise.race([
-    promise,
+    p,
     new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms))
   ]);
+}
+
+// Direct fetch to Supabase REST — bypasses the supa client's query builder
+// which can have edge cases with timeout wrappers. Uses the live access
+// token from the auth session. Returns {ok, error, data}.
+async function authToken() {
+  let token = ENV.SUPABASE_ANON_KEY;
+  try {
+    const { data: { session } } = await supa.auth.getSession();
+    if (session?.access_token) token = session.access_token;
+  } catch (e) {
+    console.warn("[NRO:authToken] using anon fallback:", e?.message);
+  }
+  return token;
+}
+async function supaRest({ method, path, body, signal, prefer }) {
+  if (!supaConfigured) return { ok: false, error: "supabase not configured" };
+  const token = await authToken();
+  const res = await fetch(`${ENV.SUPABASE_URL}/rest/v1/${path}`, {
+    method,
+    headers: {
+      "apikey": ENV.SUPABASE_ANON_KEY,
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "Prefer": prefer || "return=representation",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+    signal,
+  });
+  if (!res.ok) {
+    let detail = "";
+    try { const j = await res.json(); detail = j.message || j.hint || j.error || JSON.stringify(j).slice(0, 240); } catch {}
+    return { ok: false, error: `HTTP ${res.status}${detail ? " — " + detail : ""}` };
+  }
+  let data = null;
+  try { const j = await res.json(); data = Array.isArray(j) ? (j[0] || null) : j; } catch {}
+  return { ok: true, data };
+}
+async function patchOperator(updated, userId, signal) {
+  return supaRest({ method: "PATCH", path: `operators?id=eq.${encodeURIComponent(userId)}`, body: updated, signal });
+}
+async function insertOperator(row, signal) {
+  return supaRest({ method: "POST", path: "operators", body: row, signal });
+}
+async function insertDeployment(row, signal) {
+  return supaRest({ method: "POST", path: "deployments?select=id", body: row, signal });
 }
 
 // ====================================================================
@@ -470,9 +518,12 @@ function Onboarding() {
         tagline: tagline.trim().slice(0, 120) || null, city: city.trim() || null, state: state.trim().toUpperCase() || null,
         lat, lng,
       };
-      const { error } = await withTimeout(supa.from("operators").insert(row), 12000, "supabase insert");
-      if (error) throw new Error(error.message || "Insert failed.");
-      auth.set({ operator: { ...row, rank: "INITIATE", xp: 0, momentum: 0, signal_score: 0, streak_days: 0, followers: 0, active_users: 0, created_at: new Date().toISOString() } });
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 20000);
+      let res;
+      try { res = await insertOperator(row, ac.signal); } finally { clearTimeout(timer); }
+      if (!res.ok) throw new Error(res.error || "Insert failed.");
+      auth.set({ operator: res.data || { ...row, rank: "INITIATE", xp: 0, momentum: 0, signal_score: 0, streak_days: 0, followers: 0, active_users: 0, created_at: new Date().toISOString() } });
       loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); });
       navigate("/command");
     } catch (e) {
@@ -677,13 +728,17 @@ function Deploy() {
     if (busy) return;
     setBusy(true); setErr(null);
     try {
-      const { data, error } = await withTimeout(
-        supa.from("deployments").insert({ operator_id: a.user.id, kind, title: title.trim(), description: desc.trim() || null, url: url.trim() || null }).select("id").single(),
-        12000, "supabase deploy"
-      );
-      if (error) throw new Error(error.message || "Deploy failed.");
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 20000);
+      let res;
+      try {
+        res = await insertDeployment({ operator_id: a.user.id, kind, title: title.trim(), description: desc.trim() || null, url: url.trim() || null }, ac.signal);
+      } finally { clearTimeout(timer); }
+      if (!res.ok) throw new Error(res.error || "Deploy failed.");
+      const id = res.data?.id;
+      if (!id) throw new Error("Server didn't return deployment id");
       loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); });
-      navigate(`/u/${a.operator.handle}/d/${data.id}`);
+      navigate(`/u/${a.operator.handle}/d/${id}`);
     } catch (e) {
       console.error("[NRO:deploy] failed:", e);
       setErr(String(e?.message || e));
@@ -811,17 +866,21 @@ function Profile() {
         link_telegram: nullable(f.link_telegram, 60),
       };
 
-      // Supabase update with hard 12s timeout so the UI never hangs forever.
-      const { error } = await withTimeout(
-        supa.from("operators").update(updated).eq("id", a.user.id),
-        12000, "supabase update"
-      );
-      if (error) throw new Error(error.message || "Update failed.");
+      // Direct PATCH with 25s AbortController — gives slow networks room
+      // while still preventing forever-hangs.
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 25000);
+      let res;
+      try {
+        res = await patchOperator(updated, a.user.id, ac.signal);
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!res.ok) throw new Error(res.error || "Update failed.");
 
-      // Merge locally first — never let a null reload nuke auth state.
-      auth.set({ operator: { ...op, ...updated } });
-      // Best-effort refresh from server in background.
-      loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); });
+      // Use fresh row from server if we got one back, else merge locally.
+      const next = res.data ? { ...op, ...res.data } : { ...op, ...updated };
+      auth.set({ operator: next });
 
       setMsg({ type: "ok", text: "DOSSIER UPDATED · RETURNING TO COMMAND…" });
       setTimeout(() => navigate("/command"), 800);
