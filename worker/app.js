@@ -447,6 +447,20 @@ function WorkCard({ p }) {
   </article>`;
 }
 
+// Cold-arrival CTA for unauthed visitors landing on a public operator/guild
+// page from social media. The dossier IS the landing page → conversion hook.
+function ColdArrivalBanner({ op, guild }) {
+  const target = op ? `@${op.handle}` : guild ? `${guild.sigil || "◈"} ${guild.name}` : "this operator";
+  const enlistHref = op ? `/r/${op.handle}` : "/login";
+  return html`<div style="margin-bottom:20px;padding:16px 20px;border:1px solid rgba(103,232,249,.4);background:linear-gradient(180deg, rgba(103,232,249,.07), rgba(10,10,10,.85));backdrop-filter:blur(8px);display:flex;flex-wrap:wrap;align-items:center;gap:14px;box-shadow:0 0 32px -10px rgba(103,232,249,.55)">
+    <div style="flex:1;min-width:260px">
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:3px;color:var(--glow);margin-bottom:4px">// COLD ARRIVAL · NRO INTELLIGENCE NETWORK</div>
+      <div style="font-family:var(--display);font-size:20px;font-weight:600;color:var(--text);line-height:1.25">${target} is on the Grid. ${op ? "You could be next to them." : "You could join them."}</div>
+    </div>
+    <${Link} href=${enlistHref} class="btn btn-primary">ENLIST ${op ? `· VIA @${op.handle}` : ""}<span>→</span></${Link}>
+  </div>`;
+}
+
 // Inline-SVG glyphs per rank tier. Used in operator markers on the Signal Map.
 function RankGlyph({ rank }) {
   switch (rank) {
@@ -580,16 +594,26 @@ function ActivityTicker() {
 // LANDING
 // ====================================================================
 function Landing() {
-  const [stats, setStats] = useState({ operators: 0, deployments: 0 });
+  const [stats, setStats] = useState({ operators: 0, deployments: 0, guilds: 0, shipsThisWeek: 0, totalMrrCents: 0, totalUsers: 0 });
   const [top, setTop] = useState([]);
   useEffect(() => {
     if (!supaConfigured) return;
+    const sinceWeek = new Date(Date.now() - 7 * 86400000).toISOString();
     Promise.all([
       supa.from("operators").select("*", { count: "exact", head: true }),
       supa.from("deployments").select("*", { count: "exact", head: true }),
       supa.from("operators").select("id,handle,display_name,avatar_url,rank,xp,momentum,signal_score,streak_days").order("momentum", { ascending: false }).limit(5),
-    ]).then(([o, d, t]) => {
-      setStats({ operators: o.count || 0, deployments: d.count || 0 });
+      supa.from("guilds").select("*", { count: "exact", head: true }),
+      supa.from("deployments").select("*", { count: "exact", head: true }).gte("created_at", sinceWeek),
+      supa.from("projects").select("mrr_cents,arr_cents,last_sale_cents,users_count"),
+    ]).then(([o, d, t, g, w, pj]) => {
+      let totalMrrCents = 0, totalUsers = 0;
+      for (const p of (pj.data || [])) {
+        // Combine: monthly equivalent of all revenue forms
+        totalMrrCents += (p.mrr_cents || 0) + Math.floor((p.arr_cents || 0) / 12) + (p.last_sale_cents || 0);
+        totalUsers += (p.users_count || 0);
+      }
+      setStats({ operators: o.count || 0, deployments: d.count || 0, guilds: g.count || 0, shipsThisWeek: w.count || 0, totalMrrCents, totalUsers });
       setTop(t.data || []);
     });
   }, []);
@@ -604,12 +628,14 @@ function Landing() {
         <${Link} href="/grid" class="btn">SURVEY THE GRID</${Link}>
       </div>
       <${Panel} corners=${true}>
-        <div class="panel-head"><span class="lbl">// LIVE NETWORK STATUS</span><span class="hint">REAL-TIME</span></div>
+        <div class="panel-head"><span class="lbl">// NETWORK PULSE · LIVE</span><span class="hint">PUBLIC INTELLIGENCE LAYER</span></div>
         <div class="stats-row">
           <${Stat} label="Operators" value=${stats.operators} accent="glow" />
+          <${Stat} label="Guilds" value=${stats.guilds} accent="glow" />
           <${Stat} label="Deployments" value=${stats.deployments} accent="glow" />
-          <${Stat} label="Sectors" value="01" hint="OPERATOR CORE v0.1" />
-          <${Stat} label="Realm" value="NEXT" accent="gold" hint="// EXPANDING" />
+          <${Stat} label="Ships · 7D" value=${stats.shipsThisWeek} hint="LAST WEEK" />
+          <${Stat} label="Tracked Rev" value=${fmtMoney(stats.totalMrrCents)} accent="gold" hint="MONTHLY EQUIV" />
+          <${Stat} label="Reach" value=${fmtUsers(stats.totalUsers)} hint="USERS COMBINED" />
         </div>
         <div style="border-top:1px solid var(--line);padding:12px 16px"><${ActivityTicker} /></div>
       </${Panel}>
@@ -669,6 +695,19 @@ function Login() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [cooldown, setCooldown] = useState(0);
+  // Capture ?via=handle into sessionStorage so it survives the magic-link round-trip.
+  // Onboarding reads this and writes recruited_by on operator insert.
+  const via = useMemo(() => {
+    try {
+      const url = new URL(location.href);
+      const v = url.searchParams.get("via");
+      if (v && /^[a-z0-9_]{2,24}$/i.test(v)) {
+        sessionStorage.setItem("nro:via", v.toLowerCase());
+        return v.toLowerCase();
+      }
+      return sessionStorage.getItem("nro:via");
+    } catch { return null; }
+  }, []);
   useEffect(() => {
     if (cooldown <= 0) return;
     const t = setTimeout(() => setCooldown(c => c - 1), 1000);
@@ -693,6 +732,9 @@ function Login() {
     <main class="container center">
       <span class="tag">// ENLISTMENT TERMINAL</span>
       <h1 style="font-family:var(--display);font-size:44px;font-weight:700;line-height:1.05;margin:16px 0 12px">Identify yourself,<br/><span class="glow">operator.</span></h1>
+      ${via ? html`<div style="margin:0 0 18px;padding:10px 14px;border:1px solid rgba(103,232,249,.4);background:var(--glowsoft);font-family:var(--mono);font-size:11px;color:var(--glow);letter-spacing:1.5px">
+        // RECRUITED BY <${Link} href=${`/u/${via}`} style="color:var(--glow);text-decoration:underline">@${via}</${Link}>
+      </div>` : null}
       <p style="color:var(--dim);font-size:14px;margin:0 0 24px">We send a single-use sign-in link to your email. No passwords. No theatrics.</p>
       <${Panel} corners=${true}>
         <div class="panel-head"><span class="lbl">// AUTH · MAGIC LINK</span></div>
@@ -735,18 +777,31 @@ function Onboarding() {
         if (geo) { lat = geo.lat; lng = geo.lng; }
       }
       if (lat == null) { const fb = fallbackGeo(handle); lat = fb.lat; lng = fb.lng; }
+
+      // Recruit attribution — read sessionStorage (set by Login from ?via=).
+      // Look up the recruiter operator id; ignore silently if not found.
+      let recruitedBy = null;
+      try {
+        const via = sessionStorage.getItem("nro:via");
+        if (via && /^[a-z0-9_]{2,24}$/.test(via)) {
+          const { data } = await supa.from("operators").select("id").eq("handle", via).maybeSingle();
+          if (data?.id && data.id !== a.user.id) recruitedBy = data.id;
+        }
+      } catch {}
+
       const row = {
         id: a.user.id, handle: handle.toLowerCase(), display_name: name.trim().slice(0, 48) || handle,
         tagline: tagline.trim().slice(0, 120) || null, city: city.trim() || null, state: state.trim().toUpperCase() || null,
-        lat, lng,
+        lat, lng, recruited_by: recruitedBy,
       };
       const ac = new AbortController();
       const timer = setTimeout(() => ac.abort(), 20000);
       let res;
       try { res = await insertOperator(row, ac.signal); } finally { clearTimeout(timer); }
       if (!res.ok) throw new Error(res.error || "Insert failed.");
-      const finalOp = res.data || { ...row, rank: "INITIATE", xp: 0, momentum: 0, signal_score: 0, streak_days: 0, followers: 0, active_users: 0, created_at: new Date().toISOString() };
+      const finalOp = res.data || { ...row, rank: "INITIATE", xp: 0, momentum: 0, signal_score: 0, streak_days: 0, followers: 0, active_users: 0, recruit_count: 0, created_at: new Date().toISOString() };
       auth.set({ operator: finalOp });
+      try { sessionStorage.removeItem("nro:via"); } catch {}
       broadcastNros(TX.onboarding(finalOp));
       loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); });
       navigate("/command");
@@ -1336,18 +1391,21 @@ function Projects() {
 // OPERATOR DOSSIER
 // ====================================================================
 function Dossier({ handle, deploymentId }) {
+  const a = useAuth();
   const [op, setOp] = useState(null);
   const [deps, setDeps] = useState([]);
   const [projects, setProjects] = useState([]);
   const [notfound, setNF] = useState(false);
   useEffect(() => {
     setOp(null); setNF(false);
-    supa.from("operators").select("*, guild_members(role, guild:guilds(*))").eq("handle", handle.toLowerCase()).maybeSingle().then(async ({ data }) => {
+    supa.from("operators").select("*, guild_members(role, guild:guilds(*)), recruited_by_op:operators!operators_recruited_by_fkey(handle, display_name, rank)").eq("handle", handle.toLowerCase()).maybeSingle().then(async ({ data }) => {
       if (!data) { setNF(true); return; }
       const m = (data.guild_members || [])[0];
       data.guild = m?.guild || null;
       data.guild_role = m?.role || null;
       delete data.guild_members;
+      // recruited_by_op is the recruiter — flatten array if PostgREST returned one
+      if (Array.isArray(data.recruited_by_op)) data.recruited_by_op = data.recruited_by_op[0] || null;
       setOp(data);
       const [d, p] = await Promise.all([
         supa.from("deployments").select("*").eq("operator_id", data.id).order("created_at", { ascending: false }),
@@ -1366,6 +1424,7 @@ function Dossier({ handle, deploymentId }) {
   return html`
     <${Nav} />
     <main class="container" style="padding:40px 24px;max-width:1024px">
+      ${!a.user ? html`<${ColdArrivalBanner} op=${op}/>` : null}
       <${Panel} corners=${true} glow=${true}>
         <div class="panel-head"><span class="lbl">// OPERATOR DOSSIER</span><span class="hint">ENLISTED ${new Date(op.created_at).toISOString().slice(0,10)}</span></div>
         <div style="display:grid;grid-template-columns:auto 1fr auto;gap:24px;padding:24px;align-items:start">
@@ -1402,7 +1461,9 @@ function Dossier({ handle, deploymentId }) {
           <${Stat} label="Total XP" value=${op.xp} />
           <${Stat} label="Deployments" value=${deps.length} />
           <${Stat} label="Streak" value=${`${op.streak_days}d`} hint="CONSECUTIVE" />
+          <${Stat} label="Recruits" value=${op.recruit_count || 0} accent="glow" hint="OPERATORS ENLISTED" />
         </div>
+        ${op.recruited_by_op ? html`<div style="padding:10px 18px;border-top:1px solid var(--line);font-family:var(--mono);font-size:11px;color:var(--mute);letter-spacing:2px">RECRUITED BY <${Link} href=${`/u/${op.recruited_by_op.handle}`} style="color:var(--glow);text-decoration:underline">@${op.recruited_by_op.handle}</${Link}></div>` : null}
         <div style="padding:18px;border-top:1px solid var(--line)"><${RankProgress} rank=${op.rank} xp=${op.xp} /></div>
       </${Panel}>
 
@@ -2090,6 +2151,7 @@ function GuildDossier({ slug }) {
   const meIsFounder = a.user?.id === g.founder_id;
   return html`<${Nav}/>
     <main class="container" style="padding:40px 24px;max-width:1024px">
+      ${!a.user ? html`<${ColdArrivalBanner} guild=${g}/>` : null}
       <${Panel} corners=${true} style=${`box-shadow:0 0 64px -16px ${g.color}80`}>
         <div class="panel-head"><span class="lbl">// GUILD DOSSIER</span><span class="hint">FORGED ${new Date(g.created_at).toISOString().slice(0,10)}</span></div>
         <div style="display:grid;grid-template-columns:auto 1fr auto;gap:24px;padding:24px;align-items:start">

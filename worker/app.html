@@ -143,7 +143,7 @@ fieldset[disabled] { opacity:0.65; }
 .hero p { color:var(--dim); line-height:1.6; font-size:17px; max-width:620px; margin:0 0 32px; }
 .hero-cta { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:48px; }
 
-.stats-row { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--line); border:1px solid var(--line); }
+.stats-row { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:1px; background:var(--line); border:1px solid var(--line); }
 .stats-row > .stat { background:var(--surface); }
 @media (max-width:768px) { .stats-row { grid-template-columns:repeat(2,1fr); } .nav-inner { padding:8px 16px; gap:12px; } .nav-link { display:none; } }
 

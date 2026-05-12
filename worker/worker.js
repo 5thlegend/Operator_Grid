@@ -66,6 +66,16 @@ export default {
     if (path === "/favicon.ico") return new Response(null, { status: 204 });
     if (path === "/favicon.svg") return new Response(FAVICON_SVG, { headers: { "content-type": "image/svg+xml", "cache-control": "public, max-age=86400" } });
 
+    // Recruit shortlink — clean URL operators drop in their X bio:
+    //   /r/[handle]  →  /login?via=[handle]
+    // SPA captures the via param at signup and writes it to operators.recruited_by.
+    const rm = path.match(/^\/r\/([^/]+)\/?$/);
+    if (rm) {
+      const handle = rm[1].toLowerCase().replace(/[^a-z0-9_]/g, "");
+      const dest = handle ? `/login?via=${encodeURIComponent(handle)}` : "/login";
+      return new Response(null, { status: 302, headers: { location: dest, "cache-control": "no-store" } });
+    }
+
     // every other route: hand to the SPA. Inject per-route OG/meta tags
     // so crawlers (Twitter/Discord/Slack/GBot) see real titles + cards.
     const meta = await routeMeta(path, url.origin, env);
