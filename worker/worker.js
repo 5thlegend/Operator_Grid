@@ -44,26 +44,167 @@ export default {
     }
 
     // robots & basics
-    if (path === "/robots.txt") return text("User-agent: *\nAllow: /\nSitemap: " + url.origin + "/sitemap.xml\n");
+    if (path === "/robots.txt") return text("User-agent: *\nAllow: /\nDisallow: /command/\nDisallow: /auth/\nSitemap: " + url.origin + "/sitemap.xml\n");
+    if (path === "/sitemap.xml") return sitemap(env, url.origin);
     if (path === "/favicon.ico") return new Response(null, { status: 204 });
     if (path === "/favicon.svg") return new Response(FAVICON_SVG, { headers: { "content-type": "image/svg+xml", "cache-control": "public, max-age=86400" } });
 
-    // every other route: hand to the SPA (it owns routing client-side)
-    const html = RAW_HTML
+    // every other route: hand to the SPA. Inject per-route OG/meta tags
+    // so crawlers (Twitter/Discord/Slack/GBot) see real titles + cards.
+    const meta = await routeMeta(path, url.origin, env);
+
+    let html = RAW_HTML
       .replace("__SUPABASE_URL__", env.NEXT_PUBLIC_SUPABASE_URL || "")
       .replace("__SUPABASE_ANON_KEY__", env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "")
       .replace("__MAPBOX_TOKEN__", env.NEXT_PUBLIC_MAPBOX_TOKEN || "")
       .replace("__SITE_URL__", env.NEXT_PUBLIC_SITE_URL || url.origin);
 
+    // swap title + og tags
+    html = html
+      .replace(/<title>[^<]*<\/title>/, `<title>${escapeHtml(meta.title)}</title>`)
+      .replace(/<meta name="description"[^/]*\/>/, `<meta name="description" content="${escapeHtml(meta.description)}"/>`)
+      .replace(/<meta property="og:title"[^/]*\/>/, `<meta property="og:title" content="${escapeHtml(meta.title)}"/>`)
+      .replace(/<meta property="og:description"[^/]*\/>/, `<meta property="og:description" content="${escapeHtml(meta.description)}"/>`);
+
+    // append additional tags before </head>
+    const extra = `
+<meta property="og:url" content="${escapeHtml(url.origin + path)}"/>
+<meta property="og:image" content="${escapeHtml(meta.image)}"/>
+<meta property="og:image:width" content="1200"/>
+<meta property="og:image:height" content="630"/>
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:title" content="${escapeHtml(meta.title)}"/>
+<meta name="twitter:description" content="${escapeHtml(meta.description)}"/>
+<meta name="twitter:image" content="${escapeHtml(meta.image)}"/>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml"/>
+<link rel="canonical" href="${escapeHtml(url.origin + path)}"/>`;
+    html = html.replace("</head>", extra + "\n</head>");
+
     return new Response(html, {
       headers: {
         "content-type": "text/html; charset=utf-8",
-        "cache-control": "public, max-age=60",
+        "cache-control": meta.cache,
         ...SECURITY_HEADERS,
       },
     });
   },
 };
+
+// ----- per-route meta lookup ---------------------------------------
+async function routeMeta(path, origin, env) {
+  const SB = env.NEXT_PUBLIC_SUPABASE_URL;
+  const KEY = env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const headers = { apikey: KEY, Authorization: `Bearer ${KEY}` };
+  const DEFAULT = {
+    title: "NRO · Operator Core",
+    description: "Builders don't post. Operators deploy. — Next Realm Operators",
+    image: origin + "/api/og/operator/_default",
+    cache: "public, max-age=60",
+  };
+
+  if (!SB || !KEY) return DEFAULT;
+
+  // /u/[handle]/d/[id]
+  const md = path.match(/^\/u\/([^/]+)\/d\/([0-9a-f-]+)\/?$/i);
+  if (md) {
+    try {
+      const r = await fetch(`${SB}/rest/v1/deployments?id=eq.${encodeURIComponent(md[2])}&select=kind,title,description,operator:operators!inner(handle,display_name)`, { headers, cf: { cacheTtl: 30 } });
+      const arr = await r.json();
+      const d = arr?.[0];
+      if (d) {
+        const op = Array.isArray(d.operator) ? d.operator[0] : d.operator;
+        return {
+          title: `${d.title} · @${op.handle} · NRO`,
+          description: (d.description ? d.description.slice(0, 160) : `${d.kind.toUpperCase()} deployment by ${op.display_name} on the Next Realm Operator Grid.`),
+          image: origin + `/api/og/deployment/${encodeURIComponent(md[2])}`,
+          cache: "public, max-age=120, s-maxage=120",
+        };
+      }
+    } catch {}
+  }
+
+  // /u/[handle]
+  const mu = path.match(/^\/u\/([^/]+)\/?$/);
+  if (mu) {
+    try {
+      const r = await fetch(`${SB}/rest/v1/operators?handle=eq.${encodeURIComponent(mu[1].toLowerCase())}&select=handle,display_name,tagline,rank,signal_score,xp,momentum,streak_days`, { headers, cf: { cacheTtl: 30 } });
+      const arr = await r.json();
+      const o = arr?.[0];
+      if (o) {
+        const score = Number(o.signal_score || 0).toFixed(1);
+        const stats = `${o.rank} · Signal ${score} · ${o.xp} XP · ${o.streak_days}d streak`;
+        return {
+          title: `${o.display_name} (@${o.handle}) · NRO`,
+          description: o.tagline ? o.tagline : `Operator dossier on the Next Realm Grid — ${stats}.`,
+          image: origin + `/api/og/operator/${encodeURIComponent(mu[1])}`,
+          cache: "public, max-age=60, s-maxage=60",
+        };
+      }
+    } catch {}
+  }
+
+  // /grid
+  if (path === "/grid" || path === "/grid/list") {
+    return {
+      title: "The Grid · NRO",
+      description: "Live tactical influence map of the Next Realm Operator network. Realtime deployment pulses, ranked by Signal Score.",
+      image: origin + "/api/og/grid",
+      cache: "public, max-age=60",
+    };
+  }
+
+  // /login
+  if (path === "/login") {
+    return {
+      title: "Enlist · NRO",
+      description: "Enlist as an Operator on the Next Realm Grid. Single-use magic link, no passwords.",
+      image: origin + "/api/og/operator/_default",
+      cache: "public, max-age=300",
+    };
+  }
+
+  return DEFAULT;
+}
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+// ----- sitemap ------------------------------------------------------
+async function sitemap(env, origin) {
+  const SB = env.NEXT_PUBLIC_SUPABASE_URL;
+  const KEY = env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const headers = { apikey: KEY, Authorization: `Bearer ${KEY}` };
+  const urls = [
+    { loc: origin + "/", priority: "1.0", changefreq: "hourly" },
+    { loc: origin + "/grid", priority: "0.9", changefreq: "always" },
+    { loc: origin + "/grid/list", priority: "0.6", changefreq: "hourly" },
+    { loc: origin + "/login", priority: "0.5", changefreq: "yearly" },
+  ];
+  try {
+    const opsRes = await fetch(`${SB}/rest/v1/operators?select=handle,updated_at&order=updated_at.desc&limit=2000`, { headers, cf: { cacheTtl: 300 } });
+    const ops = await opsRes.json();
+    for (const o of (ops || [])) {
+      urls.push({ loc: `${origin}/u/${encodeURIComponent(o.handle)}`, lastmod: o.updated_at, priority: "0.7", changefreq: "daily" });
+    }
+    const depRes = await fetch(`${SB}/rest/v1/deployments?select=id,created_at&order=created_at.desc&limit=5000`, { headers, cf: { cacheTtl: 300 } });
+    const deps = await depRes.json();
+    for (const d of (deps || [])) {
+      // we don't have the operator handle inline, skip lastmod URL for deployments since it requires a join.
+      // Crawlers will discover them via dossier pages anyway.
+    }
+  } catch {}
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${urls.map(u => `  <url>
+    <loc>${u.loc}</loc>${u.lastmod ? `\n    <lastmod>${u.lastmod}</lastmod>` : ""}
+    <changefreq>${u.changefreq}</changefreq>
+    <priority>${u.priority}</priority>
+  </url>`).join("\n")}
+</urlset>`;
+  return new Response(xml, { headers: { "content-type": "application/xml; charset=utf-8", "cache-control": "public, max-age=300, s-maxage=300" } });
+}
 
 function text(body, status = 200) {
   return new Response(body, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
