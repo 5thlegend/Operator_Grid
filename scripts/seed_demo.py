@@ -215,16 +215,26 @@ def seed_projects(by_handle):
 def seed_deployments(by_handle):
     print()
     handles = list(by_handle.keys())
+    # Idempotency check — fetch existing deployments per operator, key on (kind,title).
     placed = 0
+    skipped = 0
     now = time.time()
     for handle in handles:
         if handle == "generaldank": continue  # don't seed deployments under the real user
         op_id = by_handle[handle]
-        # 2-4 deployments per operator, varied
+        # Fetch existing deploys for this operator so we don't duplicate
+        st, existing = req("GET", f"/rest/v1/deployments?operator_id=eq.{op_id}&select=kind,title")
+        existing_keys = set()
+        if st == 200 and isinstance(existing, list):
+            for x in existing: existing_keys.add((x.get("kind"), x.get("title")))
+        # 2-4 deployments per operator, varied — but skip dupes
         n = random.randint(2, 4)
-        for i in range(n):
+        for _ in range(n):
             kind, title = random.choice(DEPLOY_BANK)
-            # spread across last 0-12 days
+            if (kind, title) in existing_keys:
+                skipped += 1
+                continue
+            existing_keys.add((kind, title))
             offset_sec = random.randint(0, 12 * 86400)
             created_at = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(now - offset_sec))
             row = {
@@ -236,7 +246,7 @@ def seed_deployments(by_handle):
             st, d = req("POST", "/rest/v1/deployments", row, headers={"Prefer": "return=minimal"})
             if st in (200, 201): placed += 1
             else: print(f"    ✗ deploy @{handle}: {st} {d}")
-    print(f"  placed {placed} deployments across {len(handles)-1} seed operators")
+    print(f"  placed {placed} deployments across {len(handles)-1} seed operators ({skipped} skipped as duplicates)")
 
 def main():
     random.seed(42)
