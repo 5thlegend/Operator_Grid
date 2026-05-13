@@ -248,6 +248,50 @@ def seed_deployments(by_handle):
             else: print(f"    ✗ deploy @{handle}: {st} {d}")
     print(f"  placed {placed} deployments across {len(handles)-1} seed operators ({skipped} skipped as duplicates)")
 
+# Rank tier ordering for ascension backfill.
+_RANK_ORD = {"INITIATE": 0, "OPERATOR": 1, "ARCHITECT": 2, "COMMANDER": 3, "SOVEREIGN": 4}
+_RANK_BY_ORD = {v: k for k, v in _RANK_ORD.items()}
+_RANK_XP = {0: 0, 1: 250, 2: 1000, 3: 3000, 4: 8000}
+
+def seed_ascensions(by_handle):
+    """Insert ascension rows for every rank tier each seeded operator has passed
+    through. The natural deployment trigger doesn't fire these because the seed
+    sets `rank` + `xp` directly (no in-trigger crossing). Idempotent via the
+    (operator_id, from_rank, to_rank) tuple."""
+    print()
+    inserted = 0
+    skipped = 0
+    for op in OPERATORS:
+        handle = op["handle"]
+        op_id = by_handle.get(handle)
+        if not op_id: continue
+        rank = op["rank"]
+        target_ord = _RANK_ORD.get(rank, 0)
+        if target_ord == 0: continue
+        # Fetch existing ascensions for this operator
+        st, existing = req("GET", f"/rest/v1/ascensions?operator_id=eq.{op_id}&select=from_rank,to_rank")
+        existing_keys = set()
+        if st == 200 and isinstance(existing, list):
+            for x in existing:
+                existing_keys.add((x.get("from_rank"), x.get("to_rank")))
+        # Insert one ascension per rank-up they passed through.
+        for to_ord in range(1, target_ord + 1):
+            from_rank = _RANK_BY_ORD[to_ord - 1]
+            to_rank = _RANK_BY_ORD[to_ord]
+            if (from_rank, to_rank) in existing_keys:
+                skipped += 1
+                continue
+            row = {
+                "operator_id": op_id,
+                "from_rank": from_rank,
+                "to_rank": to_rank,
+                "at_xp": _RANK_XP[to_ord],
+            }
+            st, _ = req("POST", "/rest/v1/ascensions", row, headers={"Prefer": "return=minimal"})
+            if st in (200, 201): inserted += 1
+            else: print(f"    ✗ ascend @{handle} {from_rank}->{to_rank}: {st}")
+    print(f"  placed {inserted} ascensions ({skipped} skipped as already-recorded)")
+
 def main():
     random.seed(42)
     print("=== SEEDING OPERATORS ===")
@@ -268,6 +312,9 @@ def main():
 
     print("\n=== SEEDING DEPLOYMENTS ===")
     seed_deployments(by_handle)
+
+    print("\n=== SEEDING ASCENSIONS (rank-up event log) ===")
+    seed_ascensions(by_handle)
 
     print("\n✓ Done. Reload /grid to see the network breathe.")
 
