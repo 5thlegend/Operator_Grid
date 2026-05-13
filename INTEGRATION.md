@@ -30,12 +30,12 @@ This directive supersedes the earlier "Federation (Option A)" vs "Sub-mount" vs 
 
 | # | Item | Status | Where |
 |---|---|---|---|
-| 1 | Federation SDK | ✅ shipped | `worker/nros.js` — `makeNros(env)` factory, no-op when `NROS_API_KEY` not set |
-| 2 | Universal operator auth | ⚠️ partial | Shared Supabase project gives shared `auth.users`. Need NROS callsign ↔ NRO handle mapping. |
-| 3 | Event emission hooks | ✅ shipped | `worker/app.js` `TX.*` shapes + `broadcastNros()` + `/api/nros/broadcast` Worker proxy. Wired on onboarding/deploy/rank-up/guild-forge. |
+| 1 | Federation SDK | ✅ LIVE | `worker/nros.js` — `makeNros(env)` factory + `nrosMirrorOperator` + `nrosCheckCallsign` proxies in `worker/worker.js`. |
+| 2 | Universal operator auth | ✅ LIVE | Every OG signup mirrors to NROS via `POST /api/federation/operators` (callsign + email_hash). Real-time availability across realms via `GET /api/federation/operators/check`. Login UI surfaces "ONE CALLSIGN · FEDERATION-WIDE". |
+| 3 | Event emission hooks | ✅ LIVE | `worker/app.js` `TX.*` shapes + `broadcastNros()` + `/api/nros/broadcast` Worker proxy. Wired on onboarding/deploy/rank-up/guild-forge. |
 | 4 | XP synchronization | ⚠️ partial | Embedded in `MISSION_COMPLETED` metadata. Need explicit `xp.award()` call too. |
 | 5 | Mission synchronization | ❌ pending | NROS has `missions` table; NRO needs a consumer + `MISSION_ACCEPTED` event. |
-| 6 | Realm registration | ❌ pending | Awaiting `NROS_API_KEY` from `nextrealmos.pages.dev` realm registration. |
+| 6 | Realm registration | ✅ LIVE | NRO registered as realm `nro-operator-core` (id `3cafbc13-9347-4304-8c22-d376787c3830`, status ACTIVE) on `nextrealmos.pages.dev`. `NROS_API_KEY` set as Worker secret. |
 
 ---
 

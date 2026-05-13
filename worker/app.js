@@ -895,9 +895,12 @@ function Login() {
       ${via ? html`<div style="margin:0 0 18px;padding:10px 14px;border:1px solid rgba(103,232,249,.4);background:var(--glowsoft);font-family:var(--mono);font-size:11px;color:var(--glow);letter-spacing:1.5px">
         // RECRUITED BY <${Link} href=${`/u/${via}`} style="color:var(--glow);text-decoration:underline">@${via}</${Link}>
       </div>` : null}
-      <p style="color:var(--dim);font-size:14px;margin:0 0 24px">We send a single-use sign-in link to your email. No passwords. No theatrics.</p>
+      <p style="color:var(--dim);font-size:14px;margin:0 0 18px">We send a single-use sign-in link to your email. No passwords. No theatrics.</p>
+      <div style="margin:0 0 20px;padding:10px 14px;border:1px solid var(--line2);background:rgba(167,139,250,.06);font-family:var(--mono);font-size:10px;color:var(--dim);letter-spacing:1.5px;display:flex;align-items:center;gap:10px">
+        <span style="color:#a78bfa">⬡</span><span>ONE CALLSIGN · FEDERATION-WIDE — your sign-in works across NROS and every Next Realm sovereign realm.</span>
+      </div>
       <${Panel} corners=${true}>
-        <div class="panel-head"><span class="lbl">// AUTH · MAGIC LINK</span></div>
+        <div class="panel-head"><span class="lbl">// AUTH · MAGIC LINK · NROS FEDERATION</span></div>
         <form onSubmit=${submit} style="padding:20px">
           ${err ? html`<div style="margin-bottom:14px;padding:8px 12px;border:1px solid rgba(248,113,113,.4);background:rgba(248,113,113,.05);font-family:var(--mono);font-size:11px;color:var(--danger)">${err.toUpperCase()}</div>` : null}
           ${sent ? html`<div style="margin-bottom:14px;padding:8px 12px;border:1px solid rgba(103,232,249,.4);background:var(--glowsoft);font-family:var(--mono);font-size:11px;color:var(--glow);display:flex;justify-content:space-between;align-items:center">
