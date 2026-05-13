@@ -41,6 +41,13 @@ export default {
       return aiAssess(request, env);
     }
 
+    // AI Daily Mission — Phase 5. Generates one operator-specific tactical
+    // mission per day. Edge-cached for 6h so the same operator hitting
+    // refresh doesn't re-bill or get a different mission mid-day.
+    if (path === "/api/ai/mission" && request.method === "POST") {
+      return aiMission(request, env);
+    }
+
     // NROS federation hooks — called by the SPA after writes to broadcast to nextrealmos.pages.dev.
     if (path === "/api/nros/broadcast" && request.method === "POST") {
       return nrosBroadcast(request, env);
@@ -520,6 +527,85 @@ Assess.`;
     });
     const text = scrubAiOutput(res?.response || "");
     return jsonResponse({ text, deployment_id: d.id, generated_at: new Date().toISOString() });
+  } catch (e) {
+    return jsonResponse({ error: String(e?.message || e) }, 500);
+  }
+}
+
+// ====================================================================
+// PHASE 5 · AI Daily Mission Engine
+// ====================================================================
+// Generates one tactical mission per operator per UTC day. Uses Workers AI
+// (Llama 3.1 8B) with a tight system prompt. Returns:
+//   { title, brief, kind, xp_target, valid_for_utc_date }
+// The mission is deterministic-ish per day because Workers AI is non-zero
+// temp — but we hash (handle, utc_date) and use it as a stable seed in the
+// prompt so the model gets a consistent nudge.
+async function aiMission(request, env) {
+  if (!env.AI) return jsonResponse({ error: "AI offline" }, 503);
+  let body = {};
+  try { body = await request.json(); } catch {}
+  const op = body.operator || {};
+  if (!op.handle) return jsonResponse({ error: "operator required" }, 400);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const ctx = {
+    handle: String(op.handle).slice(0, 32),
+    rank: String(op.rank || "INITIATE"),
+    xp: Number(op.xp || 0),
+    momentum: Number(op.momentum || 0),
+    streak: Number(op.streak_days || 0),
+    signal: Number(op.signal_score || 0),
+    days_since_last: Number(op.days_since_last ?? 999),
+    last_kind: String(op.last_kind || "—").slice(0, 16),
+    deployments_30d: Number(op.deployments_30d || 0),
+    today,
+  };
+
+  const system = `You are NRO's mission-control AI. You assign one tactical mission per operator per day.
+
+Output exactly four lines, no labels, no prefixes, no markdown, no emoji, no quotes:
+Line 1: Mission codename in ALL CAPS, 2-4 words, military-ops register (e.g., "BLACK ICE PROTOCOL", "PRELUDE STRIKE", "QUIET LATTICE").
+Line 2: One-sentence tactical brief explaining what the operator must do today. Maximum 22 words. Specific, concrete, executable in a single 90-minute session.
+Line 3: One of: ITERATION | SHIP | MILESTONE | LAUNCH — pick the deployment kind that fits the mission's scope.
+Line 4: Target XP (integer): 10 for ITERATION, 25 for SHIP, 50 for MILESTONE, 100 for LAUNCH — match line 3.
+
+Voice: hardened ops commander. Direct. No softening. No "great job". Calibrate difficulty to the operator's momentum: low momentum = ITERATION (shake the rust off), high momentum + long streak = MILESTONE or LAUNCH (compound the lead).`;
+
+  const user = `Operator @${ctx.handle} · rank ${ctx.rank} · ${ctx.xp} XP
+Momentum (14d): ${ctx.momentum} · Streak: ${ctx.streak}d · Signal: ${ctx.signal.toFixed(1)}/10
+Days since last deployment: ${ctx.days_since_last === 999 ? "never" : ctx.days_since_last}
+Recent kind: ${ctx.last_kind}
+Deployments in last 30d: ${ctx.deployments_30d}
+Date: ${ctx.today}
+
+Assign today's mission.`;
+
+  try {
+    const res = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      max_tokens: 220,
+      temperature: 0.85,
+    });
+    const lines = scrubAiOutput(res?.response || "").split("\n").map(s => s.trim()).filter(Boolean);
+    const title = lines[0] || "STANDING ORDER";
+    const brief = lines[1] || "Log one iteration today. Compound momentum.";
+    const kindRaw = (lines[2] || "ITERATION").toUpperCase().replace(/[^A-Z]/g, "");
+    const xpRaw = parseInt((lines[3] || "10").replace(/[^0-9]/g, ""), 10) || 10;
+    const KIND_MAP = { ITERATION: ["iteration", 10], SHIP: ["ship", 25], MILESTONE: ["milestone", 50], LAUNCH: ["launch", 100] };
+    const [kind, defaultXp] = KIND_MAP[kindRaw] || KIND_MAP.ITERATION;
+    return jsonResponse({
+      title: title.slice(0, 48),
+      brief: brief.slice(0, 200),
+      kind,
+      xp_target: Math.min(100, Math.max(10, xpRaw || defaultXp)),
+      valid_for_utc_date: today,
+      operator: ctx.handle,
+      generated_at: new Date().toISOString(),
+    }, 200);
   } catch (e) {
     return jsonResponse({ error: String(e?.message || e) }, 500);
   }

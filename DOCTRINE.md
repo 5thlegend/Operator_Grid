@@ -170,12 +170,16 @@ Maintain doctrinal cohesion at all costs. Never sacrifice atmosphere for conveni
 
 ## Phase Status (as of 2026-05-13)
 
-- **Phase 0 (foundation)** — ✅ shipped. Worker SPA, Supabase, Mapbox war-map, ranks/XP/momentum/signal, guilds, dossiers, AI Coach, NROS federation, recruit shortlinks, OG cards.
-- **Phase 1 (Motion + Ambient Life)** — ✅ shipped 2026-05-13.
-  - Global motion engine: grid drift (60s loop), horizon radar sweep (90s loop), vignette breathing (14s loop), ambient signal motes (×6, 36-52s drift cycles).
-  - Cinematic route transitions: scanline-reveal animation on every `navigate()` (320ms, cubic-bezier ease).
-  - Ambient tactical life engine: when the live feed goes quiet >75s±25%, synthesizes world-telemetry events drawn from real grid state (sector readings, guild territorial moves, network telemetry, operator observations). Capped at 4 ambient events per 20-row window so atmosphere never overwhelms real signal.
-  - Reduced-motion accessibility: every ambient layer self-disables under `prefers-reduced-motion: reduce`.
-- **Phase 2 (Audio)** — 🔒 next on deck. Tactical sound system + procedural atmosphere + deployment sound language + operator signal cues.
+All six doctrine phases shipped in a single push.
+
+- **Phase 0 (foundation)** — ✅ Worker SPA, Supabase, Mapbox, ranks/XP/momentum/signal, guilds, dossiers, AI Coach, NROS federation, recruit shortlinks, OG cards.
+- **Phase 1 (Motion + Ambient Life)** — ✅ Grid drift (60s), horizon radar sweep (90s), vignette breathing (14s), 6 ambient motes (36-52s), scanline-reveal route transition (320ms), ambient tactical-life engine emitting synthesized world telemetry when feed is quiet >75s.
+- **Phase 2 (Audio)** — ✅ Web Audio API engine: 3-voice low-pass-filtered drone (55/82.5/110 Hz with slow LFO detune wobble), 11-cue palette (navigate/hover/iteration/ship/milestone/launch/ascension/success/error). Default OFF, persisted in localStorage, auto-boots on first user gesture, auto-suspends when tab is hidden. Sound toggle in nav.
+- **Phase 3 (Territorial Evolution)** — ✅ 24-sector grid (6 cols × 4 rows) covering contiguous USA, A-1..D-6 codes. Per-sector dominant guild computed from summed signal-score. Mapbox layer tints each cell by controlling guild color (6% / 13% if contested). Capture-event detection fires `[TERRITORY]` events into the tactical feed when control flips. Layer Control gains SECTORS toggle.
+- **Phase 4 (Visual Ascension)** — ✅ SOVEREIGN rotating conic-gradient halo (14s spin), COMMANDER dashed-ring halo with throbbing scale (3.4s), streak ember (gold flickering dot for 7+ day streaks), active-now pulse ring (last 60 min activity, 1.4s loop).
+- **Phase 5 (AI Mission Engine)** — ✅ `/api/ai/mission` endpoint generates one tactical mission per operator per UTC day via Workers AI Llama 3.1 8B. Returns codename + brief + kind + XP target. Daily Mission card on /command persists in localStorage, auto-detects completion when matching-kind deploy lands same day.
+- **Phase 6 (Economic Intelligence)** — ✅ Recruitment Ladder + Economic Credibility panels on /grid/list. Verified Revenue gold badge appears on dossier for operators with ≥$10k in featured project revenue.
+
+Bundle: 302.9 KB (started at 258.6 KB pre-doctrine). 17% growth for six phases of capability.
 
 *Next agent: read this file before touching code. The doctrine is the contract.*

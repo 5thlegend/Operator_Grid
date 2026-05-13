@@ -169,6 +169,154 @@ async function deleteProject(id, userId, signal) {
 }
 
 // ====================================================================
+// PHASE 2 · TACTICAL AUDIO ENGINE
+// ====================================================================
+// Synthesized command-center audio. Default OFF — Web Audio policy requires
+// a user gesture before any sound can play. Persistent state in localStorage.
+// Doctrine: restrained. Never noisy. Subliminal "command center is humming."
+//
+// Layers:
+//   - Ambient drone   : 3 layered low-pass oscillators @ 55/82.5/110 Hz with
+//                       slow LFO detune wobble. Volume capped at 0.12.
+//   - Cue library     : short procedural envelopes for navigate / deploy /
+//                       ascension / hover / cue. Volumes capped at 0.05-0.15.
+//   - Auto-suspend    : ambient pauses when the tab is hidden so we don't
+//                       leak audio in the user's background.
+//
+// All disabled under prefers-reduced-motion since users who avoid motion
+// often also avoid ambient noise — same opt-out gesture, doctrine-clean.
+const nroAudio = {
+  ctx: null, master: null, ambientGain: null, ambientNodes: [], enabled: false, _initted: false,
+  _supportsReducedMotion() {
+    try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; }
+  },
+  isStored() {
+    try { return localStorage.getItem("nro:audio") === "1"; } catch { return false; }
+  },
+  _ensureCtx() {
+    if (this.ctx) return true;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return false;
+      this.ctx = new Ctx();
+      this.master = this.ctx.createGain();
+      this.master.gain.value = 0.7;
+      this.master.connect(this.ctx.destination);
+      // Tab-visibility auto-suspend
+      document.addEventListener("visibilitychange", () => {
+        if (!this.ctx) return;
+        if (document.hidden) { try { this.ctx.suspend(); } catch {} }
+        else if (this.enabled) { try { this.ctx.resume(); } catch {} }
+      });
+      this._initted = true;
+      return true;
+    } catch { return false; }
+  },
+  setEnabled(v) {
+    if (this._supportsReducedMotion()) v = false;
+    if (!this._ensureCtx()) return;
+    this.enabled = !!v;
+    try { localStorage.setItem("nro:audio", v ? "1" : "0"); } catch {}
+    if (this.enabled) { try { this.ctx.resume(); } catch {}; this._startAmbient(); }
+    else { this._stopAmbient(); }
+    window.dispatchEvent(new CustomEvent("nro:audio-changed", { detail: this.enabled }));
+  },
+  toggle() { this.setEnabled(!this.enabled); },
+  _startAmbient() {
+    if (!this.ctx || this.ambientNodes.length) return;
+    const ag = this.ctx.createGain();
+    ag.gain.value = 0;
+    ag.connect(this.master);
+    const now = this.ctx.currentTime;
+    ag.gain.linearRampToValueAtTime(0.12, now + 4);
+    this.ambientGain = ag;
+    const voices = [
+      { freq: 55,   type: "sine",     detune: 0,  lfo: 0.07 },
+      { freq: 82.5, type: "triangle", detune: -8, lfo: 0.09 },
+      { freq: 110,  type: "sine",     detune: 6,  lfo: 0.05 },
+    ];
+    for (const v of voices) {
+      const osc = this.ctx.createOscillator();
+      osc.type = v.type;
+      osc.frequency.value = v.freq;
+      osc.detune.value = v.detune;
+      const filt = this.ctx.createBiquadFilter();
+      filt.type = "lowpass"; filt.frequency.value = 600; filt.Q.value = 1;
+      const lfo = this.ctx.createOscillator();
+      lfo.frequency.value = v.lfo + Math.random() * 0.04;
+      const lfoGain = this.ctx.createGain();
+      lfoGain.gain.value = 6;
+      lfo.connect(lfoGain);
+      lfoGain.connect(osc.detune);
+      osc.connect(filt);
+      filt.connect(ag);
+      osc.start();
+      lfo.start();
+      this.ambientNodes.push(osc, lfo);
+    }
+  },
+  _stopAmbient() {
+    if (!this.ambientGain) return;
+    const t = this.ctx.currentTime;
+    this.ambientGain.gain.cancelScheduledValues(t);
+    this.ambientGain.gain.linearRampToValueAtTime(0, t + 1.2);
+    const ag = this.ambientGain;
+    const nodes = this.ambientNodes;
+    this.ambientGain = null; this.ambientNodes = [];
+    setTimeout(() => {
+      nodes.forEach(n => { try { n.stop(); n.disconnect(); } catch {} });
+      try { ag.disconnect(); } catch {}
+    }, 1400);
+  },
+  cue(kind) {
+    if (!this.enabled || !this.ctx) return;
+    const t = this.ctx.currentTime;
+    const PALETTE = {
+      navigate:    { steps: [880, 1320],       dur: 0.18, type: "triangle", peak: 0.05 },
+      hover:       { steps: [1760],            dur: 0.06, type: "sine",     peak: 0.02 },
+      cue:         { steps: [660, 990],        dur: 0.12, type: "square",   peak: 0.04 },
+      deploy:      { steps: [440, 880, 1320],  dur: 0.32, type: "sine",     peak: 0.08 },
+      iteration:   { steps: [660, 990],        dur: 0.20, type: "triangle", peak: 0.06 },
+      ship:        { steps: [440, 880, 1320],  dur: 0.32, type: "sine",     peak: 0.08 },
+      milestone:   { steps: [330, 660, 990, 1320], dur: 0.55, type: "sine", peak: 0.10 },
+      launch:      { steps: [220, 440, 660, 880, 1100], dur: 0.95, type: "triangle", peak: 0.13 },
+      ascension:   { steps: [330, 660, 990, 1320, 1650], dur: 1.4, type: "triangle", peak: 0.15 },
+      success:     { steps: [880, 1320],       dur: 0.22, type: "sine",     peak: 0.07 },
+      error:       { steps: [220, 165],        dur: 0.22, type: "square",   peak: 0.06 },
+    };
+    const p = PALETTE[kind] || PALETTE.cue;
+    const gn = this.ctx.createGain();
+    gn.connect(this.master);
+    const step = p.dur / p.steps.length;
+    p.steps.forEach((f, i) => {
+      const o = this.ctx.createOscillator();
+      o.type = p.type; o.frequency.value = f;
+      o.connect(gn);
+      o.start(t + i * step);
+      o.stop(t + (i + 1) * step + 0.02);
+    });
+    gn.gain.setValueAtTime(0, t);
+    gn.gain.linearRampToValueAtTime(p.peak, t + 0.02);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t + p.dur);
+    setTimeout(() => { try { gn.disconnect(); } catch {} }, (p.dur + 0.1) * 1000);
+  },
+};
+// Boot from localStorage on first user gesture. Browsers block audio until
+// the user clicks, so we defer the first real init until then. We don't
+// auto-enable on load — that violates UX trust.
+(function autoBoot() {
+  const stored = nroAudio.isStored();
+  if (!stored) return;
+  const bootOnce = () => {
+    nroAudio.setEnabled(true);
+    window.removeEventListener("pointerdown", bootOnce);
+    window.removeEventListener("keydown", bootOnce);
+  };
+  window.addEventListener("pointerdown", bootOnce, { once: true });
+  window.addEventListener("keydown", bootOnce, { once: true });
+})();
+
+// ====================================================================
 // FEDERATION HOOKS — fire-and-forget broadcasts to NROS via /api/nros/broadcast.
 // Worker holds the API key; SPA never sees it. No-op when NROS_API_KEY isn't set.
 // ====================================================================
@@ -379,6 +527,8 @@ function navigate(to) {
       window.__nroRtTimer = setTimeout(() => document.body.removeAttribute("data-rt"), 360);
     }
   } catch {}
+  // PHASE 2 · audio cue
+  try { nroAudio.cue("navigate"); } catch {}
   history.pushState({}, "", to);
   window.dispatchEvent(new CustomEvent("nro:navigate", { detail: to }));
   window.scrollTo(0, 0);
@@ -441,6 +591,20 @@ function useAuth() {
 // ====================================================================
 // SHARED UI
 // ====================================================================
+function AudioToggle() {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    setOn(nroAudio.enabled);
+    const h = (e) => setOn(!!e.detail);
+    window.addEventListener("nro:audio-changed", h);
+    return () => window.removeEventListener("nro:audio-changed", h);
+  }, []);
+  const click = () => { nroAudio.toggle(); nroAudio.cue(nroAudio.enabled ? "success" : "error"); };
+  return html`<button class="audio-toggle" onClick=${click} title=${on ? "Tactical audio · ON" : "Tactical audio · OFF (click to enable)"} aria-pressed=${on} style="background:transparent;border:1px solid var(--line2);color:${on ? "var(--glow)" : "var(--mute)"};font-family:var(--mono);font-size:10px;letter-spacing:2px;padding:4px 8px;cursor:pointer;display:inline-flex;align-items:center;gap:6px">
+    <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${on ? "var(--glow)" : "var(--mute)"};${on ? "animation:pulse 1.6s infinite" : ""}"></span>
+    ${on ? "AUDIO" : "MUTED"}
+  </button>`;
+}
 function Nav({ variant = "public" }) {
   const a = useAuth();
   const handle = a.operator?.handle;
@@ -459,6 +623,7 @@ function Nav({ variant = "public" }) {
           <${Link} href="/command/deploy" class="nav-link">Deploy</${Link}>
         ` : null}
         <div class="spacer"></div>
+        <${AudioToggle}/>
         ${handle ? html`
           <${Link} href=${`/u/${handle}`} class="nav-link">@${handle}</${Link}>
           ${variant !== "command" ? html`<${Link} href="/command" class="btn btn-glow">COMMAND</${Link}>` : null}
@@ -1210,6 +1375,7 @@ function Command() {
         </div>
       </${Panel}>
 
+      <${DailyMission} op=${op} deps=${deps} daysSinceLast=${daysSinceLast} />
       <${AICoach} op=${op} deps=${deps} daysSinceLast=${daysSinceLast} />
       <${ShareDossier} op=${op} />
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:24px">
@@ -1232,6 +1398,98 @@ function Command() {
       </${Panel}>
     </main>`;
 }
+// ====================================================================
+// PHASE 5 · DAILY MISSION CARD
+// ====================================================================
+// Renders today's AI-assigned tactical mission. Persisted in localStorage so
+// the same mission shows for the whole UTC day — refreshing doesn't reroll.
+// If the operator deploys the matching kind, the card auto-marks complete.
+function DailyMission({ op, deps, daysSinceLast }) {
+  const [mission, setMission] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const todayUtc = new Date().toISOString().slice(0, 10);
+  const storageKey = `nro:mission:${op.handle}:${todayUtc}`;
+
+  useEffect(() => {
+    // Restore today's mission from localStorage if present.
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) {
+        const m = JSON.parse(raw);
+        if (m && m.valid_for_utc_date === todayUtc) setMission(m);
+      }
+    } catch {}
+  }, [op.handle]);
+
+  async function fetchMission() {
+    setBusy(true); setErr(null);
+    try {
+      const last = deps?.[0];
+      const deps30 = (deps || []).filter(d => Date.now() - new Date(d.created_at).getTime() < 30 * 86400000).length;
+      const r = await fetch("/api/ai/mission", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operator: {
+          handle: op.handle, rank: op.rank, xp: op.xp, momentum: op.momentum,
+          signal_score: op.signal_score, streak_days: op.streak_days,
+          deployments_30d: deps30, days_since_last: daysSinceLast,
+          last_kind: last?.kind || "—",
+        }}),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.error || "Mission generation failed.");
+      setMission(data);
+      try { localStorage.setItem(storageKey, JSON.stringify(data)); } catch {}
+      try { nroAudio.cue("cue"); } catch {}
+    } catch (e) {
+      setErr(String(e?.message || e));
+    } finally { setBusy(false); }
+  }
+
+  // Auto-completion detection: if any deployment of matching kind landed
+  // today (UTC), mark mission complete.
+  const matchedToday = (mission && deps?.some(d =>
+    d.kind === mission.kind &&
+    new Date(d.created_at).toISOString().slice(0,10) === todayUtc
+  )) || false;
+
+  const KIND_C = { iteration: "#a1a1aa", ship: "#67e8f9", milestone: "#a78bfa", launch: "#fbbf24" };
+  const accent = mission ? (KIND_C[mission.kind] || "#67e8f9") : "#67e8f9";
+
+  return html`<${Panel} corners=${true} style="margin-top:24px;border-color:${mission ? accent + '66' : 'var(--line2)'}">
+    <div class="panel-head" style="border-bottom-color:${mission ? accent + '33' : 'var(--line)'}">
+      <span class="lbl" style="color:${mission ? accent : 'var(--mute)'}">// TODAY'S MISSION · ${todayUtc.toUpperCase()}</span>
+      ${matchedToday ? html`<span style="font-family:var(--mono);font-size:10px;letter-spacing:2px;color:var(--gold)">✓ COMPLETE</span>` : null}
+    </div>
+    <div style="padding:20px">
+      ${!mission && !busy ? html`<div style="text-align:center;padding:24px 12px">
+          <div style="font-family:var(--mono);font-size:10px;color:var(--mute);letter-spacing:3px;margin-bottom:10px">// NO MISSION ASSIGNED</div>
+          <div style="font-family:var(--display);font-size:18px;color:var(--text);line-height:1.4;margin-bottom:16px">Receive today's tactical orders.</div>
+          <button class="btn btn-glow" onClick=${fetchMission} disabled=${busy}>REQUEST MISSION</button>
+        </div>`
+        : busy ? html`<div style="text-align:center;padding:32px 12px;font-family:var(--mono);font-size:11px;color:var(--glow);letter-spacing:3px">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--glow);margin-right:8px;animation:pulse 1.6s infinite"></span>// MISSION CONTROL · GENERATING…
+        </div>`
+        : err ? html`<div style="font-family:var(--mono);font-size:11px;color:var(--danger)">${err.toUpperCase()}
+          <button class="btn" onClick=${fetchMission} style="display:block;margin-top:12px">RETRY</button>
+        </div>`
+        : mission ? html`<div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <span style="font-family:var(--mono);font-size:10px;letter-spacing:2px;color:${accent};border:1px solid ${accent}88;padding:2px 8px">${mission.kind.toUpperCase()}</span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--glow)">+${mission.xp_target} XP</span>
+          </div>
+          <h2 style="font-family:var(--display);font-size:26px;font-weight:700;letter-spacing:.5px;margin:6px 0 12px;color:${accent}">${mission.title}</h2>
+          <p style="font-size:14px;color:var(--text);line-height:1.55;margin:0 0 20px">${mission.brief}</p>
+          ${matchedToday ? html`<div style="font-family:var(--mono);font-size:11px;color:var(--gold);letter-spacing:2px;padding:8px 12px;background:rgba(252,211,77,.08);border:1px solid rgba(252,211,77,.3)">
+            // OBJECTIVE COMPLETE · STREAK COMPOUNDED
+          </div>`
+          : html`<${Link} href="/command/deploy" class="btn btn-glow">DEPLOY ON THIS MISSION →</${Link}>`}
+        </div>` : null}
+    </div>
+  </${Panel}>`;
+}
+
 function AICoach({ op, deps, daysSinceLast }) {
   const [text, setText] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -1344,6 +1602,7 @@ function Deploy() {
       if (!id) throw new Error("Server didn't return deployment id");
       // Refresh operator stats + detect rank-up for federation broadcast.
       const prevRank = a.operator?.rank;
+      try { nroAudio.cue(kind); } catch {}
       loadOperator(a.user.id).then(fresh => {
         if (!fresh) return;
         auth.set({ operator: fresh });
@@ -1352,6 +1611,7 @@ function Deploy() {
         broadcastNros(TX.xpAwarded(fresh, xpDelta, `${kind}: ${title.trim().slice(0, 80)}`));
         if (prevRank && fresh.rank && prevRank !== fresh.rank) {
           broadcastNros(TX.rankUp(fresh, prevRank, fresh.rank));
+          try { nroAudio.cue("ascension"); } catch {}
         }
       });
       navigate(`/u/${a.operator.handle}/d/${id}`);
@@ -1801,6 +2061,16 @@ function Dossier({ handle, deploymentId }) {
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:14px">
             <${RankBadge} rank=${op.rank} size="lg" />
+            ${(() => {
+              // PHASE 6 · Verified Revenue badge — surfaces when total featured
+              // project revenue ≥ $10k. Doctrine: economic credibility is
+              // visible reputation. Gold badge near rank.
+              const featuredRev = projects.filter(p => p.featured).reduce((s, p) => s + (p.featured_revenue_cents || p.arr_cents || (p.mrr_cents || 0) * 12), 0);
+              if (featuredRev < 1_000_000) return null;
+              return html`<span class="verified-rev" title="Verified revenue across featured projects">
+                <span class="vr-glyph">$</span><span class="vr-amount">${fmtMoney(featuredRev)}</span><span class="vr-label">VERIFIED</span>
+              </span>`;
+            })()}
             <${Stat} label="Momentum" value=${op.momentum} accent="glow" hint="14D" />
           </div>
         </div>
@@ -1961,12 +2231,21 @@ function DeploymentDetail({ op, d }) {
 function GridList() {
   const [ops, setOps] = useState([]);
   const [feed, setFeed] = useState([]);
+  const [recruits, setRecruits] = useState([]);
+  const [topRev, setTopRev] = useState([]);
   useEffect(() => {
     if (!supaConfigured) return;
     Promise.all([
-      supa.from("operators").select("id,handle,display_name,avatar_url,tagline,rank,xp,momentum,signal_score,streak_days,city,state").order("signal_score", { ascending: false }).order("momentum", { ascending: false }).limit(50),
+      supa.from("operators").select("id,handle,display_name,avatar_url,tagline,rank,xp,momentum,signal_score,streak_days,city,state,recruit_count").order("signal_score", { ascending: false }).order("momentum", { ascending: false }).limit(50),
       supa.from("deployments").select("id,operator_id,kind,title,description,url,xp_awarded,created_at,operator:operators!inner(handle,display_name,avatar_url,rank)").order("created_at", { ascending: false }).limit(30),
-    ]).then(([o, f]) => { setOps(o.data || []); setFeed(f.data || []); });
+      // PHASE 6 · recruitment leaderboard
+      supa.from("operators").select("id,handle,display_name,avatar_url,rank,recruit_count").gt("recruit_count", 0).order("recruit_count", { ascending: false }).limit(8),
+      // PHASE 6 · economic credibility — top featured project revenue
+      supa.from("projects").select("id,title,url,monetization,mrr_cents,arr_cents,featured_revenue_cents,operator:operators!inner(handle,display_name,avatar_url,rank)").eq("featured", true).order("featured_revenue_cents", { ascending: false }).limit(6),
+    ]).then(([o, f, r, p]) => {
+      setOps(o.data || []); setFeed(f.data || []);
+      setRecruits(r.data || []); setTopRev(p.data || []);
+    });
   }, []);
   return html`<${Nav} />
     <main class="container" style="padding:40px 24px">
@@ -1995,6 +2274,38 @@ function GridList() {
                 </div></${Link}>`; })}
         </${Panel}>
       </div>
+
+      <!-- PHASE 6 · ECONOMIC INTELLIGENCE LAYER -->
+      <div class="grid-two" style="margin-top:24px">
+        <${Panel}>
+          <div class="panel-head"><span class="lbl">// RECRUITMENT LADDER</span><span class="hint" style="color:var(--gold)">TOP RECRUITERS</span></div>
+          ${recruits.length === 0 ? html`<div style="padding:48px 16px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--mute)">NO RECRUITERS YET · BE THE FIRST TO BUILD A LINEAGE.</div>`
+            : recruits.map((o, i) => html`<${Link} href=${`/u/${o.handle}`} class="row" key=${o.id}>
+                <span class="rank-num" style="color:${i < 3 ? '#fbbf24' : 'var(--mute)'}">${String(i+1).padStart(2,"0")}</span>
+                <${Avatar} op=${o} size=${36}/>
+                <div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:8px"><span class="name">${o.display_name}</span><span class="handle">@${o.handle}</span></div>
+                  <div class="meta"><${RankBadge} rank=${o.rank}/></div>
+                </div>
+                <div class="right"><div class="num" style="color:#fbbf24">${o.recruit_count}</div><div class="sub">ENLISTED</div></div>
+              </${Link}>`)}
+        </${Panel}>
+        <${Panel}>
+          <div class="panel-head"><span class="lbl">// ECONOMIC CREDIBILITY</span><span class="hint" style="color:var(--gold)">VERIFIED REVENUE</span></div>
+          ${topRev.length === 0 ? html`<div style="padding:48px 16px;text-align:center;font-family:var(--mono);font-size:11px;color:var(--mute)">NO FEATURED PROJECTS YET · SHIP REVENUE TO TAKE THE TOP.</div>`
+            : topRev.map((p, i) => { const op = Array.isArray(p.operator) ? p.operator[0] : p.operator;
+                const rev = p.featured_revenue_cents || (p.arr_cents || (p.mrr_cents || 0) * 12);
+                return html`<div class="row" key=${p.id}>
+                  <span class="rank-num" style="color:${i < 3 ? '#fbbf24' : 'var(--mute)'}">${String(i+1).padStart(2,"0")}</span>
+                  <${Avatar} op=${op} size=${36}/>
+                  <div style="flex:1;min-width:0">
+                    <${Link} href=${p.url || `/u/${op.handle}`} style="display:block;font-size:14px;color:var(--text);text-decoration:none">${p.title}</${Link}>
+                    <div class="meta"><span class="handle">@${op.handle}</span><span class="handle">·</span><span class="handle" style="text-transform:capitalize">${(p.monetization || "free").replace("_"," ")}</span></div>
+                  </div>
+                  <div class="right"><div class="num" style="color:#fbbf24">${fmtMoney(rev)}</div><div class="sub">${p.featured_revenue_cents ? "FEATURED" : (p.arr_cents ? "ARR" : "MRR×12")}</div></div>
+                </div>`;
+              })}
+        </${Panel}>
+      </div>
     </main>`;
 }
 
@@ -2004,6 +2315,7 @@ function GridList() {
 function LayerControl({ layers, setLayers }) {
   const items = [
     { key: "operators", label: "OPS",      hint: "Operator markers" },
+    { key: "sectors",   label: "SECTORS",  hint: "24-sector grid · territorial control" },
     { key: "factions",  label: "FACTIONS", hint: "Guild territories + banners" },
     { key: "links",     label: "LINKS",    hint: "Guild connection web" },
     { key: "pulses",    label: "PULSES",   hint: "Live deployment radar pings" },
@@ -2057,7 +2369,7 @@ function SignalMap() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);   // operator id under spotlight
   const [featuredOps, setFeaturedOps] = useState(new Set());  // operator ids with featured high-revenue projects
-  const [layers, setLayers] = useState({ operators: true, factions: true, links: true, pulses: true, heatmap: false });
+  const [layers, setLayers] = useState({ operators: true, sectors: true, factions: true, links: true, pulses: true, heatmap: false });
 
   // ESC clears spotlight
   useEffect(() => {
@@ -2158,6 +2470,7 @@ function SignalMap() {
       const pulse = { id: r.id + "-" + Date.now(), lat: op.lat, lng: op.lng, color: KIND_COLOR[r.kind] || "#67e8f9", strength: ({iteration:1,ship:2,milestone:3,launch:4})[r.kind] || 1, startedAt: Date.now() };
       setPulses(prev => [...prev.filter(x => Date.now() - x.startedAt < 6500), pulse]);
       setFeed(prev => [{ kind: "deploy", id: r.id, handle: op.handle, title: r.title, deployKind: r.kind, at: Date.now(), city: op.city }, ...prev].slice(0, 60));
+      try { nroAudio.cue(r.kind); } catch {}
     }).subscribe();
     const c2 = supa.channel("nro:map:ops").on("postgres_changes", { event: "UPDATE", schema: "public", table: "operators" }, (p) => {
       const o = p.new; const fb = fallbackGeo(o.handle);
@@ -2169,6 +2482,7 @@ function SignalMap() {
       if (!data) return;
       setAsc({ id: r.id, handle: data.handle, display_name: data.display_name, to_rank: r.to_rank });
       setFeed(prev => [{ kind: "ascension", id: r.id, handle: data.handle, to_rank: r.to_rank, at: Date.now() }, ...prev].slice(0, 60));
+      try { nroAudio.cue("ascension"); } catch {}
       setTimeout(() => setAsc(null), 5400);
     }).subscribe();
     return () => { supa.removeChannel(c1); supa.removeChannel(c2); supa.removeChannel(c3); };
@@ -2212,6 +2526,70 @@ function SignalMap() {
 
   const opList = Object.values(ops);
   const ranked = [...opList].sort((a, b) => (b.signal_score - a.signal_score) || (b.momentum - a.momentum));
+
+  // PHASE 3 · Sector grid — 6 cols × 4 rows covering contiguous USA.
+  // Each sector is keyed A-1..D-6. Dominant guild = highest sum of signal_score
+  // inside the cell. Cell tint = controlling guild color at 8% opacity; the
+  // tactical feed gets a [TERRITORY] event whenever control changes between
+  // renders.
+  const sectorGrid = useMemo(() => {
+    const COLS = 6, ROWS = 4;
+    const W_LNG = -125, E_LNG = -67;
+    const N_LAT = 49,   S_LAT = 24;
+    const dLng = (E_LNG - W_LNG) / COLS;   // ~9.7°
+    const dLat = (N_LAT - S_LAT) / ROWS;   //  6.25°
+    const sectors = [];
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const code = `${String.fromCharCode(65 + r)}-${c + 1}`;
+        const w = W_LNG + c * dLng;
+        const e = w + dLng;
+        const n = N_LAT - r * dLat;
+        const s = n - dLat;
+        sectors.push({ code, w, e, n, s, lng: (w + e) / 2, lat: (n + s) / 2, ops: [], guildScores: {}, controller: null });
+      }
+    }
+    // Bucket operators into their sector
+    for (const o of opList) {
+      if (o.lat == null || o.lng == null) continue;
+      for (const sec of sectors) {
+        if (o.lng >= sec.w && o.lng < sec.e && o.lat <= sec.n && o.lat > sec.s) {
+          sec.ops.push(o);
+          if (o.guild) {
+            const gid = o.guild.id;
+            if (!sec.guildScores[gid]) sec.guildScores[gid] = { signal: 0, guild: o.guild };
+            sec.guildScores[gid].signal += (o.signal_score || 0);
+          }
+          break;
+        }
+      }
+    }
+    // Compute controller per sector
+    for (const sec of sectors) {
+      const ranked = Object.values(sec.guildScores).sort((a, b) => b.signal - a.signal);
+      sec.controller = ranked[0] ? { guild: ranked[0].guild, signal: ranked[0].signal, contested: ranked[1] && (ranked[1].signal / ranked[0].signal > 0.7) } : null;
+    }
+    return sectors;
+  }, [opList]);
+
+  // Capture-event detection — when controller changes between renders, fire
+  // a [TERRITORY] event into the tactical feed + (if audio enabled) play cue.
+  const lastSectorControlRef = useRef({});
+  useEffect(() => {
+    const prev = lastSectorControlRef.current;
+    const next = {};
+    for (const sec of sectorGrid) {
+      next[sec.code] = sec.controller?.guild?.id || null;
+      const prevGid = prev[sec.code];
+      const curGid = next[sec.code];
+      // Only emit on actual flip, not initial population
+      if (Object.keys(prev).length && prevGid !== curGid && curGid) {
+        setFeed(p => [{ kind: "territory", id: `t-${sec.code}-${Date.now()}`, code: sec.code, guild: sec.controller.guild, at: Date.now() }, ...p].slice(0, 60));
+        try { nroAudio.cue("milestone"); } catch {}
+      }
+    }
+    lastSectorControlRef.current = next;
+  }, [sectorGrid]);
 
   // Group operators by guild for the territory layer (Mapbox-side rendering).
   const guildClusters = useMemo(() => {
@@ -2361,6 +2739,73 @@ function SignalMap() {
     }
   }, [guildClusters, ready]);
 
+  // PHASE 3 · Sector grid Mapbox layer. Rectangular cells, tinted by
+  // controlling guild color at 6% opacity (12% when contested). Sector codes
+  // rendered as labels at cell centroids.
+  useEffect(() => {
+    const m = mapRef.current; if (!m || !ready) return;
+    const features = sectorGrid.map(sec => ({
+      type: "Feature",
+      properties: {
+        code: sec.code,
+        controller_color: sec.controller?.guild?.color || "#34343e",
+        controller_name: sec.controller?.guild?.name || "UNCLAIMED",
+        controller_sigil: sec.controller?.guild?.sigil || "·",
+        ops_count: sec.ops.length,
+        fill_opacity: sec.controller ? (sec.controller.contested ? 0.13 : 0.07) : 0.018,
+        line_opacity: sec.controller ? 0.35 : 0.18,
+        label: sec.controller ? `${sec.code} · ${sec.controller.guild.sigil || "◈"}` : sec.code,
+      },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[[sec.w, sec.s], [sec.e, sec.s], [sec.e, sec.n], [sec.w, sec.n], [sec.w, sec.s]]],
+      },
+    }));
+    const data = { type: "FeatureCollection", features };
+    const sid = "sector-grid";
+    if (m.getSource(sid)) {
+      m.getSource(sid).setData(data);
+    } else {
+      m.addSource(sid, { type: "geojson", data });
+      // Insert sector fill BELOW the guild territory so the territory polygons
+      // still pop over the grid.
+      const beforeId = m.getLayer("guild-territory-fill") ? "guild-territory-fill" : undefined;
+      m.addLayer({
+        id: "sector-grid-fill", source: sid, type: "fill",
+        paint: {
+          "fill-color": ["get", "controller_color"],
+          "fill-opacity": ["get", "fill_opacity"],
+        },
+      }, beforeId);
+      m.addLayer({
+        id: "sector-grid-line", source: sid, type: "line",
+        paint: {
+          "line-color": ["get", "controller_color"],
+          "line-opacity": ["get", "line_opacity"],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 3, 0.5, 6, 1.2],
+          "line-dasharray": [2, 2],
+        },
+      }, beforeId);
+      m.addLayer({
+        id: "sector-grid-label", source: sid, type: "symbol",
+        minzoom: 3.6,
+        layout: {
+          "text-field": ["get", "label"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 3, 9, 6, 12],
+          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+          "text-letter-spacing": 0.18,
+          "text-anchor": "center",
+        },
+        paint: {
+          "text-color": ["get", "controller_color"],
+          "text-opacity": 0.55,
+          "text-halo-color": "rgba(10,10,10,0.9)",
+          "text-halo-width": 1.5,
+        },
+      }, beforeId);
+    }
+  }, [sectorGrid, ready]);
+
   // Heatmap layer — recent deployment activity (toggleable via Layer Control)
   useEffect(() => {
     const m = mapRef.current; if (!m || !ready) return;
@@ -2409,7 +2854,10 @@ function SignalMap() {
     setVis("guild-connections-glow", layers.links);
     setVis("guild-connections-line", layers.links);
     setVis("deployment-heatmap",   layers.heatmap);
-  }, [layers, ready, guildClusters]);
+    setVis("sector-grid-fill",     layers.sectors);
+    setVis("sector-grid-line",     layers.sectors);
+    setVis("sector-grid-label",    layers.sectors);
+  }, [layers, ready, guildClusters, sectorGrid]);
 
   // Spotlight: dim non-selected guild's territory + connection lines on the map
   useEffect(() => {
@@ -2469,6 +2917,10 @@ function SignalMap() {
                 <div style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;color:#fbbf24;letter-spacing:2px"><span>↑</span>[ASCENSION]<span style="margin-left:auto;color:var(--mute)">${relTime(it.at)}</span></div>
                 <div style="font-size:12px;color:var(--text);margin-top:4px">@${it.handle} → <span style="font-family:var(--mono);color:#fbbf24">${it.to_rank}</span></div>
               </div>`
+              : it.kind === "territory" ? html`<div style="border:1px solid ${it.guild.color}66;background:${it.guild.color}0d;padding:6px 8px">
+                <div style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;color:${it.guild.color};letter-spacing:2px"><span>⬢</span>[TERRITORY]<span style="margin-left:auto;color:var(--mute)">${relTime(it.at)}</span></div>
+                <div style="font-size:12px;color:var(--text);margin-top:4px">${it.guild.sigil || "◈"} ${it.guild.name} captured <span style="font-family:var(--mono)">Sector ${it.code}</span></div>
+              </div>`
               : html`<div style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;letter-spacing:2px">
                 <span class="feed-tag" style="border:1px solid var(--line2);padding:1px 6px;color:${it.color || "var(--mute)"};letter-spacing:2px;font-size:9px">${it.tag}</span>
                 <span style="margin-left:auto;color:var(--mute)">${relTime(it.at)}</span>
@@ -2522,6 +2974,10 @@ function SignalMap() {
             const topIds = new Set(opList.slice().sort((a,b) => (b.signal_score||0)-(a.signal_score||0)).slice(0,3).map(o => o.id));
             const selectedOp = selected ? opList.find(o => o.id === selected) : null;
             const selectedGuildId = selectedOp?.guild?.id || null;
+            // PHASE 4 · Visual ascension — last-60min activity, 7+ streak,
+            // and SOVEREIGN/COMMANDER tier each get their own dedicated layer
+            // on the marker. Bigger ranks get bigger orbital rings.
+            const now = Date.now();
             return opList.map(o => {
               const p = projectPoint(o.lng, o.lat); if (!p) return null;
               const color = o.guild?.color || rankFill[o.rank] || "#67e8f9";
@@ -2530,12 +2986,23 @@ function SignalMap() {
               const persistent = topIds.has(o.id);
               const isSelected = selected === o.id;
               const isAlly = selectedGuildId && o.guild?.id === selectedGuildId && !isSelected;
-              const cls = `marker ${persistent ? 'marker-top' : ''} ${isSelected ? 'marker-selected' : ''} ${isAlly ? 'marker-ally' : ''}`;
+              const isSovereign = o.rank === "SOVEREIGN";
+              const isCommander = o.rank === "COMMANDER";
+              const isElite = isSovereign || isCommander;
+              const streak = o.streak_days || 0;
+              const hotStreak = streak >= 7;
+              const lastDep = o.last_deployment_at ? new Date(o.last_deployment_at).getTime() : 0;
+              const activeNow = lastDep > 0 && (now - lastDep) < 60 * 60 * 1000;  // < 60 min
+              const cls = `marker ${persistent ? 'marker-top' : ''} ${isSelected ? 'marker-selected' : ''} ${isAlly ? 'marker-ally' : ''} ${isElite ? 'marker-elite' : ''} ${hotStreak ? 'marker-streak' : ''} ${activeNow ? 'marker-active' : ''}`;
               return html`<a href=${`/u/${o.handle}`} key=${o.id} class=${cls}
                     onMouseEnter=${() => setTT({ op: o, x: p.x + 18, y: p.y - 8 })} onMouseLeave=${() => setTT(null)}
                     onClick=${(e) => { e.preventDefault(); e.stopPropagation(); setSelected(selected === o.id ? null : o.id); }}
-                    style=${`left:${p.x - r}px;top:${p.y - r}px;width:${r*2}px;height:${r*2}px;pointer-events:auto`}>
-                <span class="pulse" style=${`background:radial-gradient(circle, ${color}55 0%, transparent 65%);animation:pulse ${o.rank === "COMMANDER" || o.rank === "SOVEREIGN" ? "1.6s" : "2.4s"} infinite`}></span>
+                    style=${`left:${p.x - r}px;top:${p.y - r}px;width:${r*2}px;height:${r*2}px;pointer-events:auto;--g:${color}`}>
+                <span class="pulse" style=${`background:radial-gradient(circle, ${color}55 0%, transparent 65%);animation:pulse ${isElite ? "1.4s" : "2.4s"} infinite`}></span>
+                ${isSovereign ? html`<span class="sovereign-halo" aria-hidden="true"></span>` : null}
+                ${isCommander ? html`<span class="commander-halo" aria-hidden="true"></span>` : null}
+                ${activeNow ? html`<span class="active-ring" aria-hidden="true"></span>` : null}
+                ${hotStreak ? html`<span class="streak-ember" aria-hidden="true" title=${`${streak}-day streak`}></span>` : null}
                 <span class="ring" style=${`border-color:${color}aa`}></span>
                 <span class="glyph" style=${`position:absolute;left:50%;top:50%;width:${glyphSize}px;height:${glyphSize}px;transform:translate(-50%,-50%);color:${color}`}>
                   <${RankGlyph} rank=${o.rank} />
