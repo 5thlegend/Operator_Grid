@@ -369,6 +369,16 @@ function useRoute() {
 }
 function navigate(to) {
   if (to === location.pathname) return;
+  // PHASE 1 · Cinematic route transition — fire the scanline-reveal CSS animation
+  // by toggling data-rt on <body>. Auto-cleared after 360ms so a rapid second
+  // navigation re-fires cleanly.
+  try {
+    if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      document.body.setAttribute("data-rt", "on");
+      clearTimeout(window.__nroRtTimer);
+      window.__nroRtTimer = setTimeout(() => document.body.removeAttribute("data-rt"), 360);
+    }
+  } catch {}
   history.pushState({}, "", to);
   window.dispatchEvent(new CustomEvent("nro:navigate", { detail: to }));
   window.scrollTo(0, 0);
@@ -729,6 +739,98 @@ const normalizeTicker = (r) => ({
   id: r.id, kind: r.kind, title: r.title, created_at: r.created_at,
   handle: Array.isArray(r.operator) ? r.operator[0]?.handle : r.operator?.handle,
 });
+// ====================================================================
+// PHASE 1 · AMBIENT TACTICAL LIFE — world-telemetry synthesizer.
+// ====================================================================
+// Generates realistic-feeling reconnaissance lines pulled from real grid
+// state (guild positions, active operators, recent geography). Used only
+// when the live feed has gone quiet — never replaces real signal, only
+// fills silence. Doctrine: the world is alive without the user.
+//
+// Returns an event shaped like:
+//   { kind: "ambient", text, sub, tag }
+// or null when no good synthesis is possible.
+
+const _AMBIENT_SECTORS = [
+  ["Pacific", "PAC"], ["Atlantic", "ATL"], ["Mountain", "MTN"],
+  ["Heartland", "HRT"], ["Gulf", "GLF"], ["Northwest", "PNW"],
+  ["Southwest", "SW"], ["Northeast", "NE"], ["Bay", "BAY"],
+  ["Midwest", "MW"], ["Cascade", "CSC"], ["Sunbelt", "SBL"],
+];
+
+function _pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+function synthAmbientEvent(opsList) {
+  if (!opsList || opsList.length < 1) return null;
+  const guilds = {};
+  for (const o of opsList) {
+    if (!o.guild) continue;
+    const g = o.guild;
+    if (!guilds[g.id]) guilds[g.id] = { ...g, members: [] };
+    guilds[g.id].members.push(o);
+  }
+  const guildList = Object.values(guilds);
+  const r = Math.random();
+
+  // 1. Sector activity reading (~28%)
+  if (r < 0.28) {
+    const [name, code] = _pick(_AMBIENT_SECTORS);
+    const idx = (Math.floor(Math.random() * 9) + 1);
+    const density = (Math.random() * 3.5 + 0.4).toFixed(1);
+    return {
+      kind: "ambient",
+      tag: "RECON",
+      text: `Sector ${code}-${idx} · ${name.toUpperCase()} corridor`,
+      sub: `Signal density ${density}σ · scanning`,
+    };
+  }
+  // 2. Guild territorial reading (~24%, only if at least 1 guild)
+  if (r < 0.52 && guildList.length) {
+    const g = _pick(guildList);
+    const member = _pick(g.members);
+    const verbs = ["consolidating", "expanding", "fortifying", "patrolling", "broadcasting"];
+    return {
+      kind: "ambient",
+      tag: g.sigil || "◈",
+      text: `${g.name} ${_pick(verbs)} ${member?.city || "regional"} corridor`,
+      sub: `${g.members.length} operators registered`,
+      color: g.color,
+    };
+  }
+  // 3. Network telemetry (~20%)
+  if (r < 0.72) {
+    const total = opsList.length;
+    const types = [
+      `Network telemetry · ${total} operators online`,
+      `Federation handshake · NROS uplink stable`,
+      `Mapbox tile cache · 98.4% hit ratio`,
+      `Signal lattice · convergence index ${(Math.random()*0.5+0.5).toFixed(2)}`,
+      `XP ledger sync · ${Math.floor(Math.random()*40+12)}ms RTT`,
+      `Realm beacon · NRO-CORE pinging green`,
+    ];
+    return {
+      kind: "ambient",
+      tag: "SYS",
+      text: _pick(types),
+      sub: "ambient telemetry",
+    };
+  }
+  // 4. Operator-state observation (~28%) — uses a real operator handle
+  const op = _pick(opsList);
+  const obs = [
+    `streak holding · ${op.streak_days ?? 0}d`,
+    `signal ${(op.signal_score ?? 0).toFixed(1)} · momentum ${op.momentum ?? 0}`,
+    `last seen ${op.city || "off-grid"}`,
+    `rank ${op.rank} · trajectory stable`,
+  ];
+  return {
+    kind: "ambient",
+    tag: "OBS",
+    text: `@${op.handle} · ${_pick(obs)}`,
+    sub: op.guild?.name || "unaligned",
+  };
+}
+
 function ActivityTicker() {
   const items = useLiveTicker();
   if (!items.length) return html`<div style="font-family:var(--mono);font-size:11px;color:var(--mute)"><span class="dot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--mute);margin-right:8px"></span>AWAITING FIRST DEPLOYMENT</div>`;
@@ -2075,6 +2177,30 @@ function SignalMap() {
   // reap stale pulses
   useEffect(() => { const t = setInterval(() => setPulses(p => p.filter(x => Date.now() - x.startedAt < 6500)), 1000); return () => clearInterval(t); }, []);
 
+  // PHASE 1 · Ambient tactical life engine. When the live feed is quiet for
+  // >75s, emit a synthetic world-telemetry event so the network feels alive
+  // and inhabited. Drawn from real grid state — guild positions, recent ops,
+  // active sectors — so it reads as legitimate reconnaissance, not lorem ipsum.
+  // Each ambient event is flagged `ambient:true` for muted typographic styling.
+  useEffect(() => {
+    const opsList = Object.values(ops);
+    if (!opsList.length) return;
+    const t = setInterval(() => {
+      const newest = feed[0];
+      const quietMs = newest ? Date.now() - newest.at : Infinity;
+      if (quietMs > 75000 + (Math.random() - 0.5) * 40000) {
+        const ev = synthAmbientEvent(opsList);
+        if (!ev) return;
+        setFeed(prev => {
+          const ambientCount = prev.slice(0, 20).filter(x => x.ambient).length;
+          if (ambientCount >= 4) return prev;
+          return [{ ...ev, at: Date.now(), ambient: true }, ...prev].slice(0, 60);
+        });
+      }
+    }, 18000);
+    return () => clearInterval(t);
+  }, [Object.keys(ops).length, feed.length]);
+
   // project markers on map move
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -2333,16 +2459,22 @@ function SignalMap() {
             <div style="font-family:var(--display);font-size:14px;color:var(--text);line-height:1.4">Be the first to fire.</div>
             <${Link} href="/command/deploy" style="font-family:var(--mono);font-size:10px;letter-spacing:2px;color:var(--glow);border:1px solid var(--glow);padding:6px 12px;text-decoration:none">+ LOG DEPLOYMENT</${Link}>
           </div>`
-          : feed.map(it => html`<div style="padding:12px 14px;border-bottom:1px solid var(--line)" key=${it.id}>
+          : feed.map((it, i) => html`<div class=${it.ambient ? "feed-item ambient" : ""} style="padding:12px 14px;border-bottom:1px solid var(--line)" key=${(it.id||"") + "-" + i}>
               ${it.kind === "deploy" ? html`<div style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;letter-spacing:2px">
                 <span style="color:${KIND_COLOR[it.deployKind]}">[${it.deployKind.toUpperCase()}]</span><span style="margin-left:auto;color:var(--mute)">${relTime(it.at)}</span>
               </div>
               <div style="font-size:12px;color:var(--text);margin-top:6px;line-height:1.3">${it.title}</div>
               <div style="font-family:var(--mono);font-size:10px;color:var(--mute);margin-top:4px">@${it.handle}${it.city ? ` · ${it.city}` : ""}</div>`
-              : html`<div style="border:1px solid rgba(252,211,77,.4);background:rgba(252,211,77,.05);padding:6px 8px">
+              : it.kind === "ascension" ? html`<div style="border:1px solid rgba(252,211,77,.4);background:rgba(252,211,77,.05);padding:6px 8px">
                 <div style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;color:#fbbf24;letter-spacing:2px"><span>↑</span>[ASCENSION]<span style="margin-left:auto;color:var(--mute)">${relTime(it.at)}</span></div>
                 <div style="font-size:12px;color:var(--text);margin-top:4px">@${it.handle} → <span style="font-family:var(--mono);color:#fbbf24">${it.to_rank}</span></div>
-              </div>`}
+              </div>`
+              : html`<div style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;letter-spacing:2px">
+                <span class="feed-tag" style="border:1px solid var(--line2);padding:1px 6px;color:${it.color || "var(--mute)"};letter-spacing:2px;font-size:9px">${it.tag}</span>
+                <span style="margin-left:auto;color:var(--mute)">${relTime(it.at)}</span>
+              </div>
+              <div style="font-size:11px;color:var(--dim);margin-top:6px;line-height:1.35">${it.text}</div>
+              <div style="font-family:var(--mono);font-size:9px;color:var(--mute);margin-top:3px;letter-spacing:1px">// ${it.sub}</div>`}
             </div>`)}
       </div>
 

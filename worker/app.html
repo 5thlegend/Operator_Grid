@@ -57,6 +57,112 @@ fieldset[disabled] { opacity:0.65; }
 .scan { position:fixed; inset:0; pointer-events:none; z-index:0;
   background: repeating-linear-gradient(to bottom, transparent 0, transparent 3px, rgba(255,255,255,.012) 3px, rgba(255,255,255,.012) 4px);
 }
+
+/* ====================================================================
+   PHASE 1 · MOTION ENGINE — ambient world life
+   ====================================================================
+   Doctrine: the world is alive without the user. Restrained, never noisy.
+   Every motion here respects prefers-reduced-motion. */
+
+/* Slow vertical drift on the grid overlay — 60s loop, ±8px, imperceptible
+   per-frame but creates subliminal "the network is breathing" feeling. */
+.grid-overlay { animation: nro-grid-drift 60s linear infinite; will-change: background-position; }
+@keyframes nro-grid-drift {
+  0%   { background-position: 0 0, 0 0, 0 0, 0 0; }
+  100% { background-position: 0 56px, 56px 0, 0 14px, 14px 0; }
+}
+
+/* Horizon radar sweep — a single 1px line crosses the screen every 90s.
+   Visible only as a faint cyan luminance, never bright. Anchors the
+   feeling of an active scanner. */
+.nro-horizon { position:fixed; inset:0; pointer-events:none; z-index:1; overflow:hidden; }
+.nro-horizon::before {
+  content:""; position:absolute; left:-12%; right:-12%; top:50%;
+  height:1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(103,232,249,0) 12%, rgba(103,232,249,.55) 50%, rgba(103,232,249,0) 88%, transparent 100%);
+  filter: blur(0.4px);
+  animation: nro-horizon-sweep 90s ease-in-out infinite;
+  opacity: 0;
+}
+@keyframes nro-horizon-sweep {
+  0%   { top: -4%; opacity: 0; }
+  6%   { opacity: .55; }
+  46%  { opacity: .55; }
+  52%  { opacity: 0; }
+  100% { top: 104%; opacity: 0; }
+}
+
+/* Ambient particle layer — 6 slow-moving signal motes, near-imperceptible
+   at idle but contribute "inhabited atmosphere". Pure CSS, no JS cost. */
+.nro-motes { position:fixed; inset:0; pointer-events:none; z-index:1; overflow:hidden; }
+.nro-motes i {
+  position:absolute; display:block; width:2px; height:2px; border-radius:50%;
+  background: radial-gradient(circle, rgba(103,232,249,.85), rgba(103,232,249,0) 70%);
+  opacity:.4;
+  will-change: transform, opacity;
+}
+.nro-motes i:nth-child(1) { left:8%;  top:14%; animation: nro-mote-drift 38s ease-in-out infinite; animation-delay: -5s; }
+.nro-motes i:nth-child(2) { left:82%; top:24%; animation: nro-mote-drift 44s ease-in-out infinite; animation-delay: -19s; transform: scale(1.4); }
+.nro-motes i:nth-child(3) { left:36%; top:78%; animation: nro-mote-drift 52s ease-in-out infinite; animation-delay: -32s; }
+.nro-motes i:nth-child(4) { left:64%; top:66%; animation: nro-mote-drift 41s ease-in-out infinite; animation-delay: -11s; transform: scale(0.7); }
+.nro-motes i:nth-child(5) { left:18%; top:52%; animation: nro-mote-drift 48s ease-in-out infinite; animation-delay: -24s; }
+.nro-motes i:nth-child(6) { left:92%; top:88%; animation: nro-mote-drift 36s ease-in-out infinite; animation-delay: -7s; transform: scale(1.2); }
+@keyframes nro-mote-drift {
+  0%   { transform: translate3d(0,0,0)   scale(1);    opacity: 0;   }
+  10%  { opacity: .5; }
+  50%  { transform: translate3d(-24px,-18px,0) scale(1.1); opacity: .35; }
+  90%  { opacity: .45; }
+  100% { transform: translate3d(0,-36px,0) scale(0.9); opacity: 0;   }
+}
+
+/* Slow vignette breathing — the dark frame inhales every 14s.
+   Subliminal "system is alive" cue. */
+.nro-vignette { position:fixed; inset:0; pointer-events:none; z-index:1;
+  background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,.42) 100%);
+  animation: nro-vignette-breathe 14s ease-in-out infinite;
+}
+@keyframes nro-vignette-breathe {
+  0%,100% { opacity: .85; }
+  50%     { opacity: 1; }
+}
+
+/* Cinematic route transition — a horizontal scanline reveal that fires
+   briefly on every internal navigation. Triggered by toggling `data-rt=on`
+   on <body> from the router (see app.js navigate()). */
+body[data-rt="on"]::after {
+  content:""; position:fixed; left:0; right:0; top:0; height:100vh; z-index:200;
+  pointer-events:none;
+  background: linear-gradient(to bottom,
+    transparent 0%,
+    rgba(103,232,249,0) 45%,
+    rgba(103,232,249,.18) 49.5%,
+    rgba(255,255,255,.45) 50%,
+    rgba(103,232,249,.18) 50.5%,
+    rgba(103,232,249,0) 55%,
+    transparent 100%);
+  animation: nro-route-reveal .32s cubic-bezier(.18,.7,.22,1) forwards;
+}
+@keyframes nro-route-reveal {
+  0%   { transform: translateY(-110%); opacity: 0; }
+  18%  { opacity: 1; }
+  82%  { opacity: 1; }
+  100% { transform: translateY(110%);  opacity: 0; }
+}
+
+/* Ambient feed events get their own quieter typographic register so they
+   read as "world telemetry" rather than "your operator's events". */
+.feed-item.ambient { opacity:.55; }
+.feed-item.ambient .feed-tag { color: var(--mute); border-color: var(--line2); }
+.feed-item.ambient .feed-tag::before { content:""; display:inline-block; width:5px; height:5px; border-radius:50%; background: var(--mute); margin-right:6px; vertical-align: 1px; }
+
+/* When user prefers reduced motion, kill every ambient layer. The
+   doctrine values immersion; accessibility values not nauseating people. */
+@media (prefers-reduced-motion: reduce) {
+  .grid-overlay { animation: none !important; }
+  .nro-horizon, .nro-motes, .nro-vignette { display: none !important; }
+  body[data-rt="on"]::after { animation: none !important; display: none !important; }
+}
+
 .app { position:relative; z-index:1; min-height:100vh; display:flex; flex-direction:column; }
 
 /* NAV */
@@ -496,6 +602,9 @@ fieldset[disabled] { opacity:0.65; }
 <body>
 <div class="grid-overlay"></div>
 <div class="scan"></div>
+<div class="nro-horizon" aria-hidden="true"></div>
+<div class="nro-motes" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+<div class="nro-vignette" aria-hidden="true"></div>
 <div id="app">
   <noscript>
     <div style="max-width:600px;margin:120px auto;padding:24px;color:#9a9aa3;font-family:Inter,sans-serif;text-align:center">
