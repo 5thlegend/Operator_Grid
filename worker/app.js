@@ -182,46 +182,90 @@ function broadcastNros(payload) {
     keepalive: true,
   }).catch(() => {});
 }
+
+// Mirror an OG signup into the canonical NROS callsign registry.
+// Idempotent — safe to call multiple times for the same operator.
+async function mirrorOperatorToNros(op, email) {
+  if (!op?.id || !op?.handle) return null;
+  try {
+    const r = await fetch("/api/nros/mirror-operator", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        external_uid:  op.id,                  // OG's auth.users.id
+        callsign:      op.handle,              // canonical handle
+        email:         email || undefined,
+        display_name:  op.display_name || op.handle,
+        metadata: {
+          city:           op.city || null,
+          state:          op.state || null,
+          recruited_by:   op.recruited_by || null,
+          rank_at_mirror: op.rank || "INITIATE",
+        },
+      }),
+    });
+    return r.ok ? await r.json() : null;
+  } catch { return null; }
+}
+
+// Real-time callsign availability check across the federation.
+// Used by the signup form to warn before submit.
+async function checkCallsignAvailability(callsign) {
+  if (!callsign || callsign.length < 2) return null;
+  try {
+    const r = await fetch(`/api/nros/check-callsign?callsign=${encodeURIComponent(callsign)}`);
+    return r.ok ? await r.json() : null;
+  } catch { return null; }
+}
+// Each TX uses NROS canonical field names: `callsign` (not operator_callsign)
+// and a dotted `event_name` for the V3 vocabulary. NROS infers realm from
+// the bearer key; we keep `realm_slug` here as redundant metadata only.
 const TX = {
   onboarding: (op) => ({
-    kind: "OPERATOR_JOINED", realm_slug: "operator-grid",
+    kind: "OPERATOR_JOINED",
+    event_name: "operator.activation",
     title: `${op.display_name} enlisted as @${op.handle}`,
-    operator_callsign: op.handle,
-    metadata: { city: op.city || null, state: op.state || null, lat: op.lat || null, lng: op.lng || null, recruited_by: op.recruited_by || null },
+    callsign: op.handle,
+    metadata: { source_realm: "operator-grid", city: op.city || null, state: op.state || null, lat: op.lat || null, lng: op.lng || null, recruited_by: op.recruited_by || null },
   }),
-  deployment: (op, d) => ({
-    kind: "MISSION_COMPLETED", realm_slug: "operator-grid",
-    title: `${(d.kind || "deploy").toUpperCase()} · ${d.title}`,
-    operator_callsign: op.handle,
-    metadata: { deployment_id: d.id, kind: d.kind, xp_awarded: d.xp_awarded, url: d.url || null, signal_score_after: op.signal_score, momentum_after: op.momentum, streak_days: op.streak_days },
-  }),
-  // Explicit XP synchronization — federation hook #4. Fired alongside
-  // MISSION_COMPLETED so NROS's canonical xp_logs stay in sync.
+  deployment: (op, d) => {
+    const k = (d.kind || "ship").toLowerCase();
+    return {
+      kind: k === "launch" ? "WORKFLOW_FORGED" : k === "milestone" ? "MISSION_COMPLETED" : "CUSTOM",
+      event_name: `deployment.${k}`,
+      title: `${k.toUpperCase()} · ${d.title}`,
+      callsign: op.handle,
+      metadata: { source_realm: "operator-grid", deployment_id: d.id, kind: k, xp_awarded: d.xp_awarded, url: d.url || null, signal_score_after: op.signal_score, momentum_after: op.momentum, streak_days: op.streak_days },
+    };
+  },
+  // XP sync — keeps NROS canonical xp_logs aligned with OG.
   xpAwarded: (op, delta, reason) => ({
-    kind: "XP_AWARDED", realm_slug: "operator-grid",
+    kind: "XP_AWARDED",
+    event_name: "operator.xp",
     title: `+${delta} XP · ${reason || "deployment"}`,
-    operator_callsign: op.handle,
-    metadata: { delta, total_xp_after: op.xp, source: "operator-grid", reason: reason || "deployment" },
+    callsign: op.handle,
+    metadata: { source_realm: "operator-grid", delta, total_xp_after: op.xp, reason: reason || "deployment" },
   }),
   rankUp: (op, fromRank, toRank) => ({
-    kind: "RANK_CHANGED", realm_slug: "operator-grid",
+    kind: "RANK_CHANGED",
+    event_name: "operator.ascension",
     title: `${op.display_name || op.handle} ascended to ${toRank}`,
-    operator_callsign: op.handle,
-    metadata: { from_rank: fromRank, to_rank: toRank, at_xp: op.xp },
+    callsign: op.handle,
+    metadata: { source_realm: "operator-grid", from_rank: fromRank, to_rank: toRank, at_xp: op.xp },
   }),
   guildForged: (op, g) => ({
-    kind: "CUSTOM", realm_slug: "operator-grid",
+    kind: "CUSTOM",
+    event_name: "guild.create",
     title: `${op.display_name || op.handle} forged guild ${g.sigil || "◈"} ${g.name}`,
-    operator_callsign: op.handle,
-    metadata: { event: "GUILD_FORGED", guild_id: g.id, guild_slug: g.slug, sigil: g.sigil, color: g.color },
+    callsign: op.handle,
+    metadata: { source_realm: "operator-grid", guild_id: g.id, guild_slug: g.slug, sigil: g.sigil, color: g.color },
   }),
-  // Federation hook #5 — fired when an operator accepts a mission delivered
-  // by NROS. Mission consumer is stubbed until NROS_API_KEY is set.
   missionAccepted: (op, mission) => ({
-    kind: "CUSTOM", realm_slug: "operator-grid",
+    kind: "CUSTOM",
+    event_name: "mission.accept",
     title: `${op.display_name || op.handle} accepted "${mission.title}"`,
-    operator_callsign: op.handle,
-    metadata: { event: "MISSION_ACCEPTED", mission_id: mission.id, xp_reward: mission.xp_reward, difficulty: mission.difficulty },
+    callsign: op.handle,
+    metadata: { source_realm: "operator-grid", mission_id: mission.id, xp_reward: mission.xp_reward, difficulty: mission.difficulty },
   }),
 };
 async function insertGuild(row, signal) {
@@ -880,7 +924,25 @@ function Onboarding() {
   const [state, setState] = useState("");
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Federation availability state. null = not checked, true = free,
+  // false = taken in another realm.
+  const [callsignCheck, setCallsignCheck] = useState({ checking: false, available: null, takenByRealm: null, suggestions: null });
   useEffect(() => { if (!a.loading && !a.user) navigate("/login"); if (!a.loading && a.operator) navigate("/command"); }, [a.loading, a.user, a.operator]);
+
+  // Debounced federation availability check.
+  useEffect(() => {
+    if (!handle || handle.length < 2 || !/^[a-z0-9_]+$/.test(handle)) {
+      setCallsignCheck({ checking: false, available: null, takenByRealm: null, suggestions: null });
+      return;
+    }
+    setCallsignCheck((s) => ({ ...s, checking: true }));
+    const t = setTimeout(async () => {
+      const r = await checkCallsignAvailability(handle);
+      if (r) setCallsignCheck({ checking: false, available: r.available, takenByRealm: r.taken_by_realm || null, suggestions: r.suggestions || null });
+      else   setCallsignCheck({ checking: false, available: null, takenByRealm: null, suggestions: null });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [handle]);
   async function submit(e) {
     e.preventDefault();
     if (busy) return;
@@ -918,6 +980,10 @@ function Onboarding() {
       const finalOp = res.data || { ...row, rank: "INITIATE", xp: 0, momentum: 0, signal_score: 0, streak_days: 0, followers: 0, active_users: 0, recruit_count: 0, created_at: new Date().toISOString() };
       auth.set({ operator: finalOp });
       try { sessionStorage.removeItem("nro:via"); } catch {}
+      // Mirror this signup into the canonical NROS callsign registry FIRST
+      // so the federation reserves the callsign + dedupes by email_hash. The
+      // transmission below is the public event; the mirror is the identity record.
+      mirrorOperatorToNros(finalOp, a.user.email).catch(() => {});
       broadcastNros(TX.onboarding(finalOp));
       loadOperator(a.user.id).then(fresh => { if (fresh) auth.set({ operator: fresh }); });
       navigate("/command");
@@ -937,11 +1003,19 @@ function Onboarding() {
       <${Panel} corners=${true}>
         <div class="panel-head"><span class="lbl">// OPERATOR DOSSIER · NEW</span></div>
         <form onSubmit=${submit} style="padding:20px">
-          <label class="field"><span class="lbl">Callsign</span>
-            <div style="display:flex;align-items:stretch;border:1px solid var(--line2);background:rgba(0,0,0,.4)">
+          <label class="field"><span class="lbl">Callsign · federation-wide</span>
+            <div style="display:flex;align-items:stretch;border:1px solid ${callsignCheck.available === false ? '#f87171' : callsignCheck.available === true ? 'rgba(103,232,249,.6)' : 'var(--line2)'};background:rgba(0,0,0,.4)">
               <span style="padding:0 12px;display:flex;align-items:center;font-family:var(--mono);color:var(--mute)">@</span>
               <input class="input" style="border:0;background:transparent" required value=${handle} onInput=${(e) => setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ""))} maxLength=${24} placeholder="ghost_signal"/>
+              <span style="padding:0 12px;display:flex;align-items:center;font-family:var(--mono);font-size:10px;letter-spacing:2px;color:${callsignCheck.checking ? 'var(--mute)' : callsignCheck.available === false ? '#f87171' : callsignCheck.available === true ? 'var(--glow)' : 'var(--mute)'}">
+                ${handle.length < 2 ? "" : callsignCheck.checking ? "CHECKING" : callsignCheck.available === true ? "AVAILABLE" : callsignCheck.available === false ? "TAKEN" : ""}
+              </span>
             </div>
+            ${callsignCheck.available === false ? html`
+              <div style="font-family:var(--mono);font-size:10px;letter-spacing:1px;color:#f87171;margin-top:6px">
+                // already claimed${callsignCheck.takenByRealm ? ` by /${callsignCheck.takenByRealm}` : ""} in the federation${callsignCheck.suggestions?.length ? html` — try ${callsignCheck.suggestions.slice(0, 3).map((s, i) => html`<button type="button" onClick=${() => setHandle(s.toLowerCase().replace(/[^a-z0-9_]/g, ""))} style="background:transparent;border:0;color:var(--glow);text-decoration:underline;cursor:pointer;font:inherit;margin-right:8px">${s}</button>`)}` : ""}
+              </div>
+            ` : null}
           </label>
           <label class="field"><span class="lbl">Display Name</span><input class="input" required value=${name} onInput=${(e) => setName(e.target.value)} maxLength=${48}/></label>
           <label class="field"><span class="lbl">Tagline</span><input class="input" value=${tagline} onInput=${(e) => setTagline(e.target.value)} maxLength=${120} placeholder="Forging cinematic systems for indie operators."/></label>
@@ -950,7 +1024,7 @@ function Onboarding() {
             <label class="field"><span class="lbl">State</span><input class="input" style="text-transform:uppercase;font-family:var(--mono)" value=${state} onInput=${(e) => setState(e.target.value.toUpperCase().slice(0,2))} maxLength=${2} placeholder="CA"/></label>
           </div>
           ${err ? html`<p style="font-family:var(--mono);font-size:11px;color:var(--danger);margin:8px 0">${err}</p>` : null}
-          <button class="btn btn-primary btn-block" type="submit" disabled=${busy || handle.length < 2}>${busy ? "FORGING DOSSIER…" : "INITIATE"}</button>
+          <button class="btn btn-primary btn-block" type="submit" disabled=${busy || handle.length < 2 || callsignCheck.available === false}>${busy ? "FORGING DOSSIER…" : "INITIATE"}</button>
         </form>
       </${Panel}>
     </main>`;

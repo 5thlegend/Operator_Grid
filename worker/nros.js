@@ -39,10 +39,26 @@ export function makeNros(env) {
         if (!enabled) return null;
         return fetcher(`/api/federation/operators/${encodeURIComponent(callsign)}`, "GET");
       },
-      // Upsert an operator into NROS — used on first NRO signup to mirror identity.
-      async upsert(payload) {
+      // Real-time callsign-availability check across the whole federation.
+      // Call this from the signup form as the user types so they get
+      // instant feedback before submitting.
+      //   { available, taken, taken_by_realm?, normalized, suggestions? }
+      async check(callsign) {
+        if (!enabled) return { available: true, taken: false, normalized: callsign };
+        const r = await fetcher(`/api/federation/operators/check?callsign=${encodeURIComponent(callsign)}`, "GET");
+        return r?.data ?? { available: true, taken: false, normalized: callsign };
+      },
+      // Mirror this realm's signup into NROS. Idempotent — safe to call again
+      // for the same external_uid.
+      //   payload: { external_uid, callsign, email?, display_name?, metadata? }
+      //   returns: { operator_id, callsign, claimed, mirror_status }
+      async mirror(payload) {
         if (!enabled) return { skipped: true };
         return fetcher("/api/federation/operators", "POST", payload);
+      },
+      // Legacy alias for older call sites.
+      async upsert(payload) {
+        return this.mirror(payload);
       },
     },
     xp: {

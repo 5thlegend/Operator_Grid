@@ -48,6 +48,14 @@ export default {
     if (path === "/api/nros/status" && request.method === "GET") {
       return jsonResponse({ enabled: !!env.NROS_API_KEY, base_url: env.NROS_BASE_URL || null });
     }
+    // Mirror an OG signup into the canonical NROS callsign registry.
+    if (path === "/api/nros/mirror-operator" && request.method === "POST") {
+      return nrosMirrorOperator(request, env);
+    }
+    // Real-time callsign availability across the federation (used by signup UI).
+    if (path === "/api/nros/check-callsign" && request.method === "GET") {
+      return nrosCheckCallsign(url, env);
+    }
 
     // app bundle
     if (path === "/app.js") {
@@ -525,6 +533,35 @@ async function nrosBroadcast(request, env) {
   try { body = await request.json(); } catch {}
   const nros = makeNros(env);
   const out = await nros.transmissions.push(body);
+  return jsonResponse(out);
+}
+
+// Mirror an OG signup into the canonical NROS callsign registry.
+// Body: { external_uid, callsign, email?, display_name?, metadata? }
+// Returns: { operator_id, callsign, claimed, mirror_status } from NROS.
+async function nrosMirrorOperator(request, env) {
+  if (!env.NROS_API_KEY) return jsonResponse({ skipped: true, reason: "NROS_API_KEY not set" });
+  let body = {};
+  try { body = await request.json(); } catch {}
+  if (!body?.external_uid || !body?.callsign) {
+    return jsonResponse({ ok: false, error: "external_uid + callsign required" }, 400);
+  }
+  const nros = makeNros(env);
+  const out = await nros.operators.mirror(body);
+  return jsonResponse(out);
+}
+
+// Real-time callsign availability check. SPA hits this as the user types.
+// Returns NROS's response shape: { available, taken, taken_by_realm?, normalized, suggestions? }
+async function nrosCheckCallsign(url, env) {
+  const callsign = url.searchParams.get("callsign") || "";
+  if (!callsign) return jsonResponse({ available: false, taken: false, error: "callsign required" }, 400);
+  if (!env.NROS_API_KEY) {
+    // Without NROS configured, we can't check the federation — return available so OG stays usable.
+    return jsonResponse({ available: true, taken: false, normalized: callsign, federation_offline: true });
+  }
+  const nros = makeNros(env);
+  const out = await nros.operators.check(callsign);
   return jsonResponse(out);
 }
 
