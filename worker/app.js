@@ -1822,6 +1822,22 @@ function GridList() {
 // ====================================================================
 // SIGNAL MAP
 // ====================================================================
+function LayerControl({ layers, setLayers }) {
+  const items = [
+    { key: "operators", label: "OPS",      hint: "Operator markers" },
+    { key: "factions",  label: "FACTIONS", hint: "Guild territories + banners" },
+    { key: "links",     label: "LINKS",    hint: "Guild connection web" },
+    { key: "pulses",    label: "PULSES",   hint: "Live deployment radar pings" },
+    { key: "heatmap",   label: "HEAT",     hint: "7-day activity heatmap" },
+  ];
+  return html`<div class="layer-control" title="Layer Control">
+    <div class="lc-head">// LAYERS</div>
+    ${items.map(it => html`<button key=${it.key} class=${`lc-chip ${layers[it.key] ? "on" : ""}`}
+        onClick=${() => setLayers(s => ({ ...s, [it.key]: !s[it.key] }))}
+        title=${it.hint}>${it.label}</button>`)}
+  </div>`;
+}
+
 function SpotlightCard({ op, onClose }) {
   const color = op.guild?.color || "#67e8f9";
   const stats = [
@@ -1861,6 +1877,8 @@ function SignalMap() {
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);   // operator id under spotlight
+  const [featuredOps, setFeaturedOps] = useState(new Set());  // operator ids with featured high-revenue projects
+  const [layers, setLayers] = useState({ operators: true, factions: true, links: true, pulses: true, heatmap: false });
 
   // ESC clears spotlight
   useEffect(() => {
@@ -1887,11 +1905,19 @@ function SignalMap() {
     let cancelled = false;
     (async () => {
       try {
-        const [o, f] = await Promise.all([
+        const [o, f, p] = await Promise.all([
           supa.from("operators").select("id,handle,display_name,avatar_url,rank,xp,momentum,signal_score,followers,active_users,streak_days,city,state,lat,lng, guild_members(guild:guilds(id,slug,name,color,sigil))"),
           supa.from("deployments").select("id,operator_id,kind,title,created_at,operator:operators!inner(handle,city)").order("created_at", { ascending: false }).limit(20),
+          supa.from("projects").select("operator_id,mrr_cents,arr_cents,last_sale_cents,featured").eq("featured", true),
         ]);
         if (cancelled) return;
+        // Build set of operator ids with featured high-revenue projects ($50k+ combined)
+        const opRev = {};
+        for (const pj of (p.data || [])) {
+          const cents = (pj.mrr_cents||0)*12 + (pj.arr_cents||0) + (pj.last_sale_cents||0);
+          opRev[pj.operator_id] = (opRev[pj.operator_id] || 0) + cents;
+        }
+        setFeaturedOps(new Set(Object.entries(opRev).filter(([, c]) => c >= 5_000_000).map(([id]) => id)));
         const map = {};
         (o.data || []).forEach(op => {
           const fb = fallbackGeo(op.handle);
@@ -2088,7 +2114,99 @@ function SignalMap() {
         paint: { "line-color": ["get", "color"], "line-opacity": 0.40, "line-width": 1, "line-blur": 0.5 },
       });
     }
+
+    // Faction banners — large sigil + name at guild centroid (always visible)
+    const sidBanner = "guild-banners";
+    const bannerFeatures = guildClusters.map(c => ({
+      type: "Feature",
+      properties: {
+        id: c.guild.id,
+        color: c.guild.color,
+        name: c.guild.name,
+        sigil: c.guild.sigil || "◈",
+        count: c.members.length,
+        label: `${c.guild.sigil || "◈"}  ${c.guild.name.toUpperCase()}  ·  ${c.members.length}`,
+      },
+      geometry: { type: "Point", coordinates: [c.lng, c.lat] },
+    }));
+    const bannerData = { type: "FeatureCollection", features: bannerFeatures };
+    if (m.getSource(sidBanner)) {
+      m.getSource(sidBanner).setData(bannerData);
+    } else {
+      m.addSource(sidBanner, { type: "geojson", data: bannerData });
+      m.addLayer({
+        id: "guild-banner-text", source: sidBanner, type: "symbol",
+        layout: {
+          "text-field": ["get", "label"],
+          "text-size": 13,
+          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+          "text-letter-spacing": 0.12,
+          "text-allow-overlap": false,
+          "text-ignore-placement": false,
+          "text-padding": 4,
+          "symbol-placement": "point",
+          "text-anchor": "center",
+          "text-offset": [0, 0],
+        },
+        paint: {
+          "text-color": ["get", "color"],
+          "text-halo-color": "rgba(10,10,10,0.95)",
+          "text-halo-width": 2.2,
+          "text-halo-blur": 1.2,
+        },
+      });
+    }
   }, [guildClusters, ready]);
+
+  // Heatmap layer — recent deployment activity (toggleable via Layer Control)
+  useEffect(() => {
+    const m = mapRef.current; if (!m || !ready) return;
+    const since = Date.now() - 7 * 86400000;
+    const recent = feed.filter(it => it.kind === "deploy" && it.at >= since);
+    const features = recent.map(it => {
+      const op = Object.values(ops).find(o => o.handle === it.handle);
+      if (!op || op.lat == null || op.lng == null) return null;
+      const weight = ({ iteration: 1, ship: 2, milestone: 3, launch: 4 }[it.deployKind] || 1);
+      return { type: "Feature", properties: { weight }, geometry: { type: "Point", coordinates: [op.lng, op.lat] } };
+    }).filter(Boolean);
+    const data = { type: "FeatureCollection", features };
+    const sid = "deployment-heat";
+    if (m.getSource(sid)) {
+      m.getSource(sid).setData(data);
+    } else {
+      m.addSource(sid, { type: "geojson", data });
+      m.addLayer({
+        id: "deployment-heatmap", source: sid, type: "heatmap",
+        layout: { visibility: "none" },   // off by default; Layer Control toggles
+        paint: {
+          "heatmap-weight": ["get", "weight"],
+          "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 3, 1, 9, 3],
+          "heatmap-color": [
+            "interpolate", ["linear"], ["heatmap-density"],
+            0, "rgba(103,232,249,0)",
+            0.2, "rgba(103,232,249,0.4)",
+            0.5, "rgba(167,139,250,0.6)",
+            0.8, "rgba(251,191,36,0.75)",
+            1.0, "rgba(248,113,113,0.85)",
+          ],
+          "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 3, 30, 6, 60, 9, 100],
+          "heatmap-opacity": 0.7,
+        },
+      });
+    }
+  }, [feed, ops, ready]);
+
+  // Layer Control — toggle Mapbox layer visibility from the layers state
+  useEffect(() => {
+    const m = mapRef.current; if (!m || !ready) return;
+    const setVis = (id, on) => { if (m.getLayer(id)) m.setLayoutProperty(id, "visibility", on ? "visible" : "none"); };
+    setVis("guild-territory-fill", layers.factions);
+    setVis("guild-territory-line", layers.factions);
+    setVis("guild-banner-text",    layers.factions);
+    setVis("guild-connections-glow", layers.links);
+    setVis("guild-connections-line", layers.links);
+    setVis("deployment-heatmap",   layers.heatmap);
+  }, [layers, ready, guildClusters]);
 
   // Spotlight: dim non-selected guild's territory + connection lines on the map
   useEffect(() => {
@@ -2154,6 +2272,7 @@ function SignalMap() {
       <div class="mapwrap">
         <div id="map"></div>
         ${selected && ops[selected] ? html`<${SpotlightCard} op=${ops[selected]} onClose=${() => setSelected(null)}/>` : null}
+        <${LayerControl} layers=${layers} setLayers=${setLayers}/>
         ${loading ? html`<div style="position:absolute;inset:0;display:grid;place-items:center;z-index:7;background:rgba(10,10,10,.6);backdrop-filter:blur(4px);pointer-events:none">
           <div style="text-align:center"><div style="font-family:var(--mono);font-size:11px;color:var(--glow);letter-spacing:4px"><span class="dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--glow);margin-right:8px;animation:pulse 1.6s infinite"></span>// SCANNING NETWORK…</div></div>
         </div>` : null}
@@ -2189,7 +2308,7 @@ function SignalMap() {
         </div>` : null}
         <!-- markers overlay -->
         ${ready && mapRef.current ? html`<div style="position:absolute;inset:0;pointer-events:none;z-index:3">
-          ${(() => {
+          ${layers.operators ? (() => {
             // Top-3 operators by signal_score always show their handle label (war-map leaderboard at a glance).
             const topIds = new Set(opList.slice().sort((a,b) => (b.signal_score||0)-(a.signal_score||0)).slice(0,3).map(o => o.id));
             const selectedOp = selected ? opList.find(o => o.id === selected) : null;
@@ -2212,16 +2331,17 @@ function SignalMap() {
                 <span class="glyph" style=${`position:absolute;left:50%;top:50%;width:${glyphSize}px;height:${glyphSize}px;transform:translate(-50%,-50%);color:${color}`}>
                   <${RankGlyph} rank=${o.rank} />
                 </span>
+                ${featuredOps.has(o.id) ? html`<span class="featured-badge" title="Featured high-revenue operator">$</span>` : null}
                 <span class="label" style=${`color:${color}`}>@${o.handle}${persistent ? html` · <span style="color:var(--mute);font-size:9px">S ${Number(o.signal_score||0).toFixed(1)}</span>` : ""}</span>
               </a>`;
             });
-          })()}
-          ${pulses.map(p => { const proj = projectPoint(p.lng, p.lat); if (!proj) return null; const age = Date.now() - p.startedAt; const base = 60 + p.strength * 40;
+          })() : null}
+          ${layers.pulses ? pulses.map(p => { const proj = projectPoint(p.lng, p.lat); if (!proj) return null; const age = Date.now() - p.startedAt; const base = 60 + p.strength * 40;
             return [0,1,2].map(i => { const delay = i * 700; const off = age - delay; if (off < 0) return null;
               const t = Math.min(1, off / (6000 - delay)); const scale = 0.2 + t * 1.2; const opacity = (1 - t) * 0.85;
               return html`<span key=${p.id + "-" + i} class="pulse-ring" style=${`left:${proj.x}px;top:${proj.y}px;width:${base}px;height:${base}px;border-color:${p.color};transform:translate(-50%,-50%) scale(${scale});opacity:${opacity};box-shadow:0 0 ${24*t}px ${p.color}`}></span>`;
             });
-          })}
+          }) : null}
         </div>` : null}
         ${tt ? html`<div class="tt" style=${`left:${tt.x}px;top:${tt.y}px`}>
           <div class="tt-head">// OPERATOR PROFILE <${RankBadge} rank=${tt.op.rank}/></div>
